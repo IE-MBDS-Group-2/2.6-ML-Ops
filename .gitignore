@@ -43,3 +43,6 @@ models/**
 reports/**
 !reports/
 !reports/README.md
+
+# Local git worktrees (one folder per branch, see README)
+branches/
