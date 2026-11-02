@@ -1,0 +1,4 @@
+# .flake8  [Style checker settings]
+[flake8]
+max-line-length = 120
+exclude = .git,__pycache__,.pytest_cache,.pytest_tmp,notebooks,data,models,reports,logs,wandb,artifacts
