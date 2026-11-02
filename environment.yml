@@ -30,7 +30,11 @@ dependencies:
   - pylint
   - radon
   - black
+<<<<<<< HEAD
   - isort
   - pip
   - pip:
       - detect-secrets
+=======
+  - isort
+>>>>>>> 03e9097 (Repo scaffolding and setup for business case brief.)
