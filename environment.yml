@@ -31,3 +31,6 @@ dependencies:
   - radon
   - black
   - isort
+  - pip
+  - pip:
+      - detect-secrets
