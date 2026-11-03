@@ -43,3 +43,6 @@ models/**
 reports/**
 !reports/
 !reports/README.md
+
+# Testing
+.pytest_tmp/
