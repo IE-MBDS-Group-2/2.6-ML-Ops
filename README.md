@@ -1,4 +1,4 @@
-# [Project name: to be chosen by the team]
+# Portfolio optimization with reinforcement learning
 
 > The firm should fund an MLOps pipeline because its pre-set, reproducible gate picks the agent, a cheaper rule or today's process, replacing one-off backtests.
 
