@@ -37,7 +37,7 @@ def load_csv(filepath: Path) -> pd.DataFrame:
         FileNotFoundError: if the file does not exist.
     """
     if not filepath.exists():
-        raise FileNotFoundError(f"File not found: {filepath}. Check the path or create the file first.")
+        raise FileNotFoundError(f"File not found: {filepath}. Check the path or create the file.")
     df = pd.read_csv(filepath)
     logger.info("Loaded %d rows from %s", len(df), filepath)
     return df
@@ -68,7 +68,7 @@ def save_json(data: dict, filepath: Path) -> None:
     Outputs:
         None. The file is written to disk with a 2-space indent.
     Why:
-        The evaluation step saves its metrics here so a person can read them and main.py can report the gate.
+        The evaluation step saves its metrics here, so a person and main.py can read them.
     """
     filepath.parent.mkdir(parents=True, exist_ok=True)
     filepath.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -99,7 +99,7 @@ def load_model(filepath: Path) -> Any:
     Outputs:
         The model object, ready to call predict on.
     Why:
-        Inference must use exactly the model that training saved, with a clear error if it is missing.
+        Inference must use the exact model that training saved, and fail clearly if it is missing.
 
     Raises:
         FileNotFoundError: if the file does not exist (train a model first).
