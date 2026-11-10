@@ -15,7 +15,9 @@ Tests     tests/test_utils.py (stage 2)
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
+import joblib
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -71,3 +73,39 @@ def save_json(data: dict, filepath: Path) -> None:
     filepath.parent.mkdir(parents=True, exist_ok=True)
     filepath.write_text(json.dumps(data, indent=2), encoding="utf-8")
     logger.info("Saved JSON to %s", filepath)
+
+
+def save_model(model: Any, filepath: Path) -> None:
+    """Save a trained model to disk with joblib, creating missing parent folders.
+
+    Inputs:
+        model: any trained object joblib can store, for example a scikit-learn pipeline.
+        filepath: where to write it, for example models/model.joblib.
+    Outputs:
+        None. The model file is written to disk.
+    Why:
+        Training and inference run at different times; the saved file is the hand-off between them.
+    """
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, filepath)
+    logger.info("Saved model to %s", filepath)
+
+
+def load_model(filepath: Path) -> Any:
+    """Load a model saved by save_model.
+
+    Inputs:
+        filepath: path of the model file.
+    Outputs:
+        The model object, ready to call predict on.
+    Why:
+        Inference must use exactly the model that training saved, with a clear error if it is missing.
+
+    Raises:
+        FileNotFoundError: if the file does not exist (train a model first).
+    """
+    if not filepath.exists():
+        raise FileNotFoundError(f"Model file not found: {filepath}. Train and save a model first.")
+    model = joblib.load(filepath)
+    logger.info("Loaded model from %s", filepath)
+    return model
