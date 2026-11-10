@@ -110,7 +110,7 @@ def _always_one_model() -> Pipeline:
     """Tiny fitted pipeline that always predicts action 1.0, so its scores are known in advance."""
     X = pd.DataFrame({"x": [0.0, 1.0, 2.0, 3.0]})
     y = pd.Series([0.0, 0.5, 1.0, 1.0])
-    return Pipeline([("model", DummyClassifier(strategy="constant", constant=1.0))]).fit(X, y)
+    return Pipeline([("model", DummyClassifier(strategy="constant", constant=np.array([1.0])))]).fit(X, y)
 
 
 def test_unit_evaluate_model_known_values():
