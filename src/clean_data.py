@@ -52,10 +52,10 @@ def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> p
 def to_wide(df: pd.DataFrame, value_column: str, tickers: list[str]) -> pd.DataFrame:
     """Pivot a clean long table to one row per date and one column per ticker.
 
-    Inputs:  df, clean long table from clean_dataframe; value_column, the column to spread (e.g. "close");
-             tickers, the ETFs to keep, in the order the columns should appear.
-    Outputs: DataFrame indexed by date (sorted), columns exactly `tickers`, keeping only dates where every
-             ticker has a value, so all ETFs share one trading calendar.
+    Inputs:  df, clean long table from clean_dataframe; value_column, the column to spread
+             (e.g. "close"); tickers, the ETFs to keep, in the order the columns should appear.
+    Outputs: DataFrame indexed by date (sorted), columns exactly `tickers`, keeping only dates
+             where every ticker has a value, so all ETFs share one trading calendar.
     Why:     features and the portfolio code compare ETFs date by date and match columns to target
              weights by position.
     Raises:  ValueError if a requested ticker does not appear in df.
@@ -68,12 +68,15 @@ def to_wide(df: pd.DataFrame, value_column: str, tickers: list[str]) -> pd.DataF
             "or that the raw price file contains them."
         )
 
-    wide = df[df[TICKER_COLUMN].isin(tickers)].pivot(index=DATE_COLUMN, columns=TICKER_COLUMN, values=value_column)
+    requested = df[df[TICKER_COLUMN].isin(tickers)]
+    wide = requested.pivot(index=DATE_COLUMN, columns=TICKER_COLUMN, values=value_column)
     wide = wide[tickers]
     wide.columns.name = None
 
     n_before = len(wide)
     wide = wide.dropna(how="any")
-    logger.info("Dropped %d of %d dates where not every ticker has a %s value", n_before - len(wide), n_before,
-                value_column)
+    logger.info(
+        "Dropped %d of %d dates where not every ticker has a %s value",
+        n_before - len(wide), n_before, value_column,
+    )
     return wide
