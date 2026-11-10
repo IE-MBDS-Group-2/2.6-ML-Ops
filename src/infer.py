@@ -46,3 +46,29 @@ def run_inference(model: Pipeline, X_infer: pd.DataFrame, include_proba: bool = 
         preds["probability"] = model.predict_proba(X_infer).max(axis=1)
     logger.info("Predicted %d rows", len(preds))
     return preds
+
+
+def apply_fallback(preds: pd.DataFrame, rule_actions: pd.Series, missing_input: pd.Series,
+                   min_probability: float) -> pd.DataFrame:
+    """Replace unsure or incomplete predictions with today's rule action.
+
+    Inputs:  preds: output of run_inference(..., include_proba=True); rule_actions: today's rule action per row;
+             missing_input: True where any model input was missing; min_probability: confidence needed (e.g. 0.60).
+             All three share the same index.
+    Outputs: Copy of preds plus "recommendation" (the action to take) and "fallback" (True where the rule was used).
+    Why:     The model only overrides today's rule when it is confident and fully informed.
+    """
+    if "probability" not in preds.columns:
+        raise ValueError(
+            "apply_fallback: preds has no 'probability' column. Call run_inference with include_proba=True."
+        )
+    if not (rule_actions.index.equals(preds.index) and missing_input.index.equals(preds.index)):
+        raise ValueError(
+            "apply_fallback: preds, rule_actions and missing_input must have the same index (same dates, same order)."
+        )
+    out = preds.copy()
+    out["fallback"] = (out["probability"] < min_probability) | missing_input.astype(bool)
+    out["recommendation"] = out["prediction"].where(~out["fallback"], rule_actions)
+    out = out[["prediction", "probability", "recommendation", "fallback"]]
+    logger.info("Fallback to today's rule on %d of %d rows", int(out["fallback"].sum()), len(out))
+    return out
