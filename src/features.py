@@ -14,12 +14,25 @@ def _validate_prices(close_wide: pd.DataFrame) -> None:
         raise ValueError("close_wide must contain price rows and ticker columns.")
     _validate_dates(close_wide.index)
     _validate_columns(list(close_wide.columns), "close_wide columns")
-    if not all(pd.api.types.is_numeric_dtype(dtype) and not pd.api.types.is_bool_dtype(dtype)
-               for dtype in close_wide.dtypes):
-        raise ValueError("close_wide must contain numeric prices; convert text prices before calling.")
+    _validate_price_values(close_wide)
+
+
+def _validate_price_values(close_wide: pd.DataFrame) -> None:
+    """Allow missing prices, but reject nonnumeric or invalid observed values."""
+    if not all(_is_numeric_price_dtype(dtype) for dtype in close_wide.dtypes):
+        raise ValueError(
+            "close_wide must contain numeric prices; convert text prices before calling."
+        )
     values = close_wide.to_numpy(dtype=float, na_value=np.nan)
     if np.isinf(values).any() or (values <= 0).any():
-        raise ValueError("Observed prices must be finite and positive; correct invalid prices upstream.")
+        raise ValueError(
+            "Observed prices must be finite and positive; correct invalid prices upstream."
+        )
+
+
+def _is_numeric_price_dtype(dtype) -> bool:
+    """Boolean values are not prices, even though Python treats them as numbers."""
+    return pd.api.types.is_numeric_dtype(dtype) and not pd.api.types.is_bool_dtype(dtype)
 
 
 def _validate_dates(dates: pd.Index) -> None:
@@ -38,18 +51,28 @@ def _validate_columns(columns: list[str], label: str) -> None:
         raise ValueError(f"{label} must not contain duplicate column names.")
 
 
-def _validate_windows(return_weeks: list[int], vol_days: int) -> None:
-    """Require distinct positive return windows and a sample-volatility window of at least two."""
-    if not return_weeks or any(
-            not isinstance(window, int) or isinstance(window, bool) or window <= 0 for window in return_weeks):
+def _is_positive_integer(value: int) -> bool:
+    """Reject booleans and fractional values as observation windows."""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _validate_return_weeks(return_weeks: list[int]) -> None:
+    """Require distinct positive integer return windows."""
+    if not return_weeks or not all(_is_positive_integer(window) for window in return_weeks):
         raise ValueError("return_weeks must contain positive integer windows, such as [4, 12].")
     if len(set(return_weeks)) != len(return_weeks):
         raise ValueError("return_weeks must not contain duplicate windows.")
-    if (not isinstance(vol_days, int) or isinstance(vol_days, bool)) or vol_days < 2:
+
+
+def _validate_vol_days(vol_days: int) -> None:
+    """Sample standard deviation requires at least two daily returns."""
+    if not _is_positive_integer(vol_days) or vol_days < 2:
         raise ValueError("vol_days must be an integer of at least 2 for sample standard deviation.")
 
 
-def compute_market_features(close_wide: pd.DataFrame, return_weeks: list[int], vol_days: int) -> pd.DataFrame:
+def compute_market_features(
+    close_wide: pd.DataFrame, return_weeks: list[int], vol_days: int
+) -> pd.DataFrame:
     """Compute trailing simple returns and annualized sample volatility without future data.
 
     Inputs: sorted, unique date-indexed positive prices by ticker; positive return weeks;
@@ -60,14 +83,16 @@ def compute_market_features(close_wide: pd.DataFrame, return_weeks: list[int], v
     Warm-up and incomplete windows remain NaN. Invalid inputs raise ValueError.
     """
     _validate_prices(close_wide)
-    _validate_windows(return_weeks, vol_days)
+    _validate_return_weeks(return_weeks)
+    _validate_vol_days(vol_days)
     result = {}
     for ticker in close_wide.columns:
         prices = close_wide[ticker]
         for weeks in return_weeks:
             result[f"ret_{weeks}w_{ticker}"] = prices / prices.shift(5 * weeks) - 1
         daily = prices.pct_change(fill_method=None)
-        result[f"vol_{vol_days}d_{ticker}"] = daily.rolling(vol_days, min_periods=vol_days).std(ddof=1) * np.sqrt(252)
+        volatility = daily.rolling(vol_days, min_periods=vol_days).std(ddof=1)
+        result[f"vol_{vol_days}d_{ticker}"] = volatility * np.sqrt(252)
     output = pd.DataFrame(result, index=close_wide.index)
     logger.info("Computed %d feature columns for %d price rows", len(output.columns), len(output))
     return output
@@ -87,6 +112,8 @@ def get_feature_preprocessor(numeric_columns: list[str]) -> compose.ColumnTransf
         ("imputer", impute.SimpleImputer(strategy="median", keep_empty_features=True)),
         ("scaler", preprocessing.StandardScaler()),
     ])
-    recipe = compose.ColumnTransformer([("numeric", numeric, list(numeric_columns))], remainder="drop")
+    recipe = compose.ColumnTransformer(
+        [("numeric", numeric, list(numeric_columns))], remainder="drop"
+    )
     logger.info("Created unfitted preprocessor for %d numeric columns", len(numeric_columns))
     return recipe
