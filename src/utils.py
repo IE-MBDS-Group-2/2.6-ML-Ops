@@ -12,6 +12,7 @@ Why it matters
 Tests     tests/test_utils.py (stage 2)
 """
 
+import json
 import logging
 from pathlib import Path
 
@@ -54,3 +55,19 @@ def save_csv(df: pd.DataFrame, filepath: Path) -> None:
     filepath.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(filepath, index=False)
     logger.info("Saved %d rows to %s", len(df), filepath)
+
+
+def save_json(data: dict, filepath: Path) -> None:
+    """Write a dictionary to a readable JSON file, creating missing parent folders.
+
+    Inputs:
+        data: the dictionary to save (numbers, text, lists and nested dictionaries).
+        filepath: where to write it, for example reports/metrics.json.
+    Outputs:
+        None. The file is written to disk with a 2-space indent.
+    Why:
+        The evaluation step saves its metrics here so a person can read them and main.py can report the gate.
+    """
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    filepath.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    logger.info("Saved JSON to %s", filepath)
