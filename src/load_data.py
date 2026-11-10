@@ -42,7 +42,9 @@ def load_raw_data(raw_data_path: Path) -> pd.DataFrame:
         ValueError: if the file has zero bytes, or has a header but no rows.
     """
     if not raw_data_path.exists():
-        raise FileNotFoundError(f"Raw data file not found: {raw_data_path}. Share or fetch the snapshot first.")
+        raise FileNotFoundError(
+            f"Raw data file not found: {raw_data_path}. Share or fetch the snapshot first."
+        )
     if raw_data_path.is_dir():
         raise IsADirectoryError(f"Raw data path is a folder, not a file: {raw_data_path}")
     if raw_data_path.stat().st_size == 0:
