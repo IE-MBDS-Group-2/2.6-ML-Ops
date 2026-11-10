@@ -92,6 +92,11 @@ def test_unit_check_gate_less_equal():
     assert evaluate.check_gate(0.03, "<=", 0.02) is False
 
 
+def test_unit_check_gate_passes_reduction_hit_exactly_despite_float_rounding():
+    """1 - 0.16 / 0.20 is 0.19999999999999996 in floating point; reaching the target exactly must still pass."""
+    assert evaluate.check_gate(evaluate.max_drawdown_reduction(-0.16, -0.20), ">=", 0.20) is True
+
+
 def test_unit_check_gate_unknown_comparison_raises():
     """A typo in config.yaml such as '>' or '=>' must stop the pipeline, not silently pass or fail."""
     with pytest.raises(ValueError, match="comparison"):

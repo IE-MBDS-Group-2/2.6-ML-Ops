@@ -52,3 +52,38 @@ def portfolio_metrics(values: pd.Series, costs_paid: pd.Series, periods_per_year
     logger.info("Portfolio max drawdown %.4f, annual return %.4f over %.2f years",
                 result["max_drawdown"], result["annual_return"], years)
     return result
+
+
+def max_drawdown_reduction(agent_mdd: float, baseline_mdd: float) -> float:
+    """Share of today's rule's worst loss that the agent avoided.
+
+    Inputs:  agent_mdd, baseline_mdd: max drawdowns (negative numbers, e.g. -0.16 and -0.20).
+    Outputs: 1 - |agent| / |baseline|; 0.20 means a 20% smaller worst loss, below 0 means the agent did worse.
+    Why:     This is the metric the quality gate checks (>= 0.20 on validation).
+    """
+    if baseline_mdd == 0:
+        raise ValueError(
+            "max_drawdown_reduction: baseline max drawdown is 0, so a reduction cannot be computed. "
+            "Check the baseline simulation covers a period with price moves."
+        )
+    reduction = 1 - abs(agent_mdd) / abs(baseline_mdd)
+    logger.info("Max drawdown reduction %.4f (agent %.4f vs baseline %.4f)", reduction, agent_mdd, baseline_mdd)
+    return float(reduction)
+
+
+def check_gate(value: float, comparison: str, threshold: float, tolerance: float = 1e-9) -> bool:
+    """Go / no-go decision: does the metric clear the agreed threshold?
+
+    Inputs:  value: the measured metric; comparison: ">=" or "<="; threshold: the target from config;
+             tolerance: values this close to the threshold count as equal (absorbs floating-point rounding).
+    Outputs: True if the gate is met, otherwise False.
+    Why:     One explicit pass / fail that main.py reports honestly, whichever way it goes.
+    """
+    if comparison == ">=":
+        passed = value >= threshold - tolerance
+    elif comparison == "<=":
+        passed = value <= threshold + tolerance
+    else:
+        raise ValueError(f"check_gate: comparison must be '>=' or '<=', got '{comparison}'. Fix it in config.yaml.")
+    logger.info("Quality gate %s: %.4f %s %.4f", "met" if passed else "NOT met", value, comparison, threshold)
+    return bool(passed)
