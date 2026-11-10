@@ -23,17 +23,22 @@ Balanced model portfolio, target weights (ASSUMPTION): SPY 40%, EFA 20%, IEF 30%
 Baseline: the current rule (quarterly rebalance plus ±5% drift check, back to target, 0.1% trading cost) run on this portfolio. Max drawdown: To be measured, from a backtest on frozen daily prices, run and recorded before any model is trained.
 
 ### Goal and success metrics
-Move the balanced portfolio's max drawdown from the baseline to at least 20% smaller (for example -20% to -16%) within 12 months of shadow operation alongside the current process.
+Move the balanced portfolio's max drawdown from the baseline by a reduction set after the feasibility check (aspiration: at least 20% smaller, for example -20% to -16%) within 12 months of shadow operation alongside the current process.
 
 | Type | Metric (exact name) | Baseline | Target or threshold |
 | --- | --- | --- | --- |
-| Business KPI | max drawdown | To be measured | At least 20% smaller |
-| ML metric | `calmar_ratio` (higher is better), median of 5 training runs, 2022 to 2025 | To be measured | At least 1.20 x baseline |
-| Guard | annual net return | To be measured | No more than 1 percentage point below baseline |
+| Business KPI | max drawdown | To be measured | Set after the feasibility check (aspiration: at least 20% smaller) |
+| ML metric | `max_drawdown` (closer to zero is better), median of 5 training runs, 2022 to 2025 | To be measured | Smaller than baseline by the KPI target |
+| Guard | annual net return | To be measured | No more than 0.25 percentage points below baseline |
 | Guard | annual trading cost | To be measured | No more than 2 x baseline |
-| Challenger | `calmar_ratio` vs selected simple rule | To be measured | At least 1.05 x selected rule (ESTIMATE) |
+| Guard | `tracking_error` to target weights (annualised) | To be measured | No more than X, set from the baseline on 2020 to 2021 |
+| Challenger | `max_drawdown` vs selected simple rule | To be measured | Smaller than the selected rule's |
 
-Do not release if, on 2022 to 2025, any of these holds: `calmar_ratio` below 1.20 x baseline; annual net return trails the baseline by more than 1 percentage point; annual trading cost exceeds 2 x the baseline's; `calmar_ratio` below 1.05 x the selected simple rule. Then recommend the selected simple rule if it passes the gate against the baseline, otherwise keep the current process.
+Do not release if, on 2022 to 2025, any of these holds: max drawdown misses the KPI target; annual net return trails the baseline by more than 0.25 percentage points; annual trading cost exceeds 2 x the baseline's; tracking error exceeds X; or max drawdown is not smaller than the selected simple rule's. Then recommend the selected simple rule if it passes the gate against the baseline, otherwise keep the current process.
+
+Reported, not gated: Sharpe ratio (headline), Sortino ratio, volatility, CVaR (expected shortfall) at 95%, turnover, tracking error. Calmar ratio may be shown for reference.
+
+Why tracking error is a guard: rebalancing exists to keep the portfolio close to the allocation the Investment Committee approved. An agent that cuts drawdown by letting the portfolio drift away from target would take it outside its mandate.
 
 Limits (ESTIMATES): weekly decision run under 60 s; compute cost under €0.01 per decision.
 
@@ -56,9 +61,22 @@ Personal or sensitive data: NO. Public prices only. The client and portfolio are
 Tests: every input date is on or before the decision day; the first reward date is after the execution date; reward windows join up with no gaps or overlaps; the agent and baseline use the same execution function.
 
 ### Value, cost and risks
-Benefit over a non-AI approach: smaller losses in downturns, with net return no more than 1 point below the baseline per year and trading cost no more than 2 x the baseline's. Measured by max drawdown and `calmar_ratio` against the baseline and the best simple rule on 2022 to 2025.
+Benefit over a non-AI approach: smaller losses in downturns, with net return no more than 0.25 points below the baseline per year, trading cost no more than 2 x the baseline's, and tracking error within the guard. Measured by max drawdown, Sharpe and tracking error against the baseline and the best simple rule on 2022 to 2025.
 
-Simple-rule challengers, checked weekly on Friday and always fully back to target: current rule (quarterly, ±5%); band 2.5 points; band 1.5 points; persistent drift (at least 2 ETFs beyond 2.5 points on each of the last 5 trading days). The best is selected on 2020 to 2021 by `calmar_ratio`, among rules that pass the same guards. Parameters are the team's own assumptions, inspired by public descriptions checked on 9 Nov 2026: Indexa's drift bands of 1.5 and 1.25 percentage points as reported by Finect (secondary source), and Finizens' multi-asset, multi-day trigger as described by Finect on 27 Oct 2026 (company-reported, no numeric parameters given).
+Simple-rule challengers, checked weekly on Friday. The first four go fully back to target: current rule (quarterly, ±5%); band 2.5 points; band 1.5 points; persistent drift (at least 2 ETFs beyond 2.5 points on each of the last 5 trading days). The last two do not:
+- Asymmetric rule: rebalance fully as soon as drift or drawdown passes a threshold, then move back toward target only gradually, with a minimum wait between steps (threshold and wait to be defined, ESTIMATES).
+- Matched-exposure fixed mix: constant weights holding the agent's own average equity share over the same dates, rebalanced quarterly. The agent cannot pass just by holding fewer stocks.
+
+The best is selected on 2020 to 2021 by max drawdown, among rules that pass the same guards. Parameters are the team's own assumptions, inspired by public descriptions checked on 9 Nov 2026: Indexa's drift bands of 1.5 and 1.25 percentage points as reported by Finect (secondary source), and Finizens' multi-asset, multi-day trigger as described by Finect on 27 Oct 2026 (company-reported, no numeric parameters given).
+
+Benchmarks (reported, not part of the gate): traditional portfolio optimisation portfolios (mean-variance, maximum Sharpe, minimum variance, risk parity), fitted on 2010 to 2019 only, run through the same execution function and costs.
+
+Robustness checks:
+- Holm correction across the challenger comparisons. Log how many agent versions were tried before the final one.
+- Cost sensitivity: rerun with higher costs, with exits costing more than entries plus a market impact term that grows with trade size.
+- Show the 2022 to 2025 result again with the largest drawdown episode removed. A pass that depends on one episode is reported as fragile.
+- A 12-month shadow period with no market drawdown is reported as "inconclusive", not "passed".
+- Optional input: a public market-stress indicator (VIX vs VIX3M, or recent volatility vs its normal level), used as a model input or to trigger the fallback. It also gives the drift monitor alert a concrete number.
 
 Rough cost (ALL ESTIMATES): course build by the 4 to 5 person team, part-time, about 6 weeks. At a firm: 1 ML engineer (half-time, 12 weeks) plus the quant analyst (a quarter of their time), then about a tenth of one person's time to run and monitor. Infrastructure: laptop CPU for training, GitHub Actions, W&B, Render free or lowest tier, under €50 per month.
 
@@ -74,20 +92,19 @@ Rough cost (ALL ESTIMATES): course build by the 4 to 5 person team, part-time, a
 Scales to (ideas, not findings): the firm's conservative and growth model portfolios, UCITS ETF versions, indexed pension plans, other rule-based rebalancing jobs.
 
 ### Open gaps
-1. Baseline max drawdown, `calmar_ratio`, return and cost are To be measured over 2010 to 2021 (feasibility check and challenger selection) and 2022 to 2025, before any model is trained.
-2. No release rule ties the gate to max drawdown. A model can pass `calmar_ratio` without moving the KPI, and only the return guard blocks the "sit in cash" case.
-3. `calmar_ratio` needs one definition in this README and in `config.yaml` (proposed: annualised net return divided by absolute max drawdown).
-4. Not stated: which weights each action moves toward target (Friday or Monday pre-trade), and which weights the Friday cost estimate uses.
-5. Not stated: starting weights on the first decision date and at the start of 2022, and the scope of the "every day in exactly one window" test.
-6. `config.yaml` needs fixed meanings for: "±5%" and "±2.5" (percentage points proposed), the quarterly date, daily weights for the persistent rule, simple or compounded weekly reward, the drawdown penalty reference, and a minimum trade size (Finizens uses one).
-7. "Confidence" is an action probability, not a calibrated confidence. The 60% and 10% thresholds are estimates. The weekly vs monthly committee cadence is undefined for large changes.
-8. A feasibility check before training: can a timing-only agent with perfect foresight reach 1.20 x baseline on 2010 to 2021?
-9. Evidence limits: the 2022 to 2025 test period holds essentially one drawdown, 2020 to 2021 includes the COVID crash, there are only about 830 weekly decisions in total (ESTIMATE), and the 12-month shadow period may contain no drawdown. Not yet in the risk table.
-10. "Wide drift band" as the cause is a hypothesis. The band research is not done.
-11. `[TEAM MEMBER]` placeholder: name the snapshot owner and who read Yahoo's terms, with the date.
-12. Check the `yfinance` notes for the pinned version (the cited pages were for older versions), confirm the tickers, and confirm all five ETFs have data from 2009.
-13. The drift monitor alert limit has no number. The €0.01 cost limit is compute only. The scaling claims are ideas.
-14. Challengers check weekly, whereas Indexa monitors daily. The project name is not chosen.
+1. Baseline max drawdown, return, trading cost and tracking error are To be measured over 2010 to 2021 (feasibility check and challenger selection) and 2022 to 2025, before any model is trained.
+2. Define `tracking_error` in this README and in `config.yaml` (proposed: annualised standard deviation of the difference between portfolio and target-portfolio weekly returns) and set X from the baseline on 2020 to 2021.
+3. Not stated: which weights each action moves toward target (Friday or Monday pre-trade), and which weights the Friday cost estimate uses.
+4. Not stated: starting weights on the first decision date and at the start of 2022, and the scope of the "every day in exactly one window" test.
+5. `config.yaml` needs fixed meanings for: "±5%" and "±2.5" (percentage points proposed), the quarterly date, daily weights for the persistent rule, simple or compounded weekly reward, the drawdown penalty reference, and a minimum trade size (Finizens uses one).
+6. "Confidence" is an action probability, not a calibrated confidence. The 60% and 10% thresholds are estimates. The weekly vs monthly committee cadence is undefined for large changes.
+7. Before any training: a timing-only agent with perfect foresight on 2010 to 2021 sets the ceiling for the drawdown reduction. The KPI target is set from it. Rough estimate: timing alone may not reach 20%, because the agent cannot hold fewer stocks than drift already gives it, and in 2022 stocks and bonds fell together so drift was small.
+8. Evidence limits: 2020 to 2021 includes the COVID crash, and there are only about 830 weekly decisions in total (ESTIMATE). Not yet in the risk table.
+9. "Wide drift band" as the cause is a hypothesis. The band research is not done.
+10. `[TEAM MEMBER]` placeholder: name the snapshot owner and who read Yahoo's terms, with the date.
+11. Check the `yfinance` notes for the pinned version (the cited pages were for older versions), confirm the tickers, and confirm all five ETFs have data from 2009.
+12. The drift monitor alert limit has no number. The €0.01 cost limit is compute only. The scaling claims are ideas.
+13. Challengers check weekly, whereas Indexa monitors daily. The project name is not chosen.
 
 ---
 
