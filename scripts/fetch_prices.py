@@ -2,7 +2,8 @@
 fetch_prices.py  [Data snapshot: download the frozen price file]
 ================================================================
 Purpose   Download daily prices for the portfolio ETFs from Yahoo Finance and freeze them to disk
-Input     config.yaml, section "data": tickers, start_date, end_date, raw_path, inference_path, inference_days
+Input     config.yaml: data.tickers, data.start, data.end, data.inference_days,
+          paths.raw_data, paths.inference_data
 Output    data/raw/prices.csv (long format: date, ticker, close, volume)
           data/inference/prices_latest.csv (the last N trading days of the same table)
 Run       python scripts/fetch_prices.py            (from the repository root)
@@ -10,8 +11,7 @@ Run       python scripts/fetch_prices.py            (from the repository root)
 Not in    src/: the pipeline never downloads. It reads the frozen file through load_data.py
 
 Before you run it
-- Install yfinance in your own environment first: pip install yfinance
-  (it is not in environment.yml yet, so a fresh environment does not have it)
+- yfinance comes with environment.yml (conda env create -f environment.yml)
 - Yahoo's data is for personal use only: share the file directly, never commit it to Git
 - The script logs the SHA-256 checksum of prices.csv: send it to the team so everyone can check
   they hold the same file
@@ -28,35 +28,48 @@ import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
-REQUIRED_KEYS = ("tickers", "start_date", "end_date", "raw_path", "inference_path", "inference_days")
+DATA_KEYS = ("tickers", "start", "end", "inference_days")
+PATH_KEYS = ("raw_data", "inference_data")
 
 
-def read_data_settings(config_path: Path) -> dict:
-    """Read the "data" section of the config file and check that every key is there.
+def read_settings(config_path: Path) -> dict:
+    """Read the settings this script needs from the team config and check that every key is there.
 
     Inputs:
         config_path: path of the YAML config file (for example config.yaml).
     Outputs:
-        The "data" section as a dictionary with all the keys in REQUIRED_KEYS.
+        A flat dictionary with tickers, start, end, inference_days (from the "data" section)
+        and raw_data, inference_data (from the "paths" section).
     Why:
-        Tickers, dates and paths live in the config, not in the code, so a change never needs
-        an edit here. A missing key stops the run with a message that says what to add.
+        Tickers, dates and paths live in the team config, so each path is defined once and a
+        change never needs an edit here. A missing key stops the run with a message that says
+        what to add.
 
     Raises:
         FileNotFoundError: if the config file does not exist.
-        ValueError: if the "data" section or any required key is missing.
+        ValueError: if a section or any required key is missing.
     """
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}. Run from the repository root.")
     with config_path.open(encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
-    settings = config.get("data") if isinstance(config, dict) else None
-    if not isinstance(settings, dict):
-        raise ValueError(f"No 'data' section in {config_path}. Add it with the keys: {', '.join(REQUIRED_KEYS)}")
-    missing = [key for key in REQUIRED_KEYS if key not in settings]
-    if missing:
-        raise ValueError(f"Missing keys in the 'data' section of {config_path}: {', '.join(missing)}")
-    logger.info("Read data settings from %s", config_path)
+    if not isinstance(config, dict):
+        config = {}
+
+    settings = {}
+    problems = []
+    for section, keys in (("data", DATA_KEYS), ("paths", PATH_KEYS)):
+        values = config.get(section)
+        if not isinstance(values, dict):
+            problems.append(f"no '{section}' section (needs {', '.join(keys)})")
+            continue
+        missing = [key for key in keys if key not in values]
+        if missing:
+            problems.append(f"'{section}' is missing {', '.join(missing)}")
+        settings.update({key: values[key] for key in keys if key in values})
+    if problems:
+        raise ValueError(f"Config {config_path} is incomplete: " + "; ".join(problems))
+    logger.info("Read settings from %s", config_path)
     return settings
 
 
@@ -188,20 +201,20 @@ def main(config_path: Path) -> None:
     """Run the whole download: read settings, download, check, write, log the checksum.
 
     Inputs:
-        config_path: path of the YAML config file with the "data" section.
+        config_path: path of the YAML config file with the "data" and "paths" sections.
     Outputs:
         None. Writes the two CSV files and logs the SHA-256 of the full snapshot.
     Why:
         One command freezes the data. The checks run before anything is written, so a bad
         download never replaces a good file.
     """
-    settings = read_data_settings(config_path)
-    prices = download_prices(settings["tickers"], settings["start_date"], settings["end_date"])
+    settings = read_settings(config_path)
+    prices = download_prices(settings["tickers"], settings["start"], settings["end"])
     check_prices(prices, settings["tickers"])
     checksum = write_outputs(
-        prices, Path(settings["raw_path"]), Path(settings["inference_path"]), int(settings["inference_days"])
+        prices, Path(settings["raw_data"]), Path(settings["inference_data"]), int(settings["inference_days"])
     )
-    logger.info("SHA-256 of %s: %s", settings["raw_path"], checksum)
+    logger.info("SHA-256 of %s: %s", settings["raw_data"], checksum)
 
 
 if __name__ == "__main__":
