@@ -34,6 +34,12 @@ def run_inference(model: Pipeline, X_infer: pd.DataFrame, include_proba: bool = 
              (the highest class probability per row). X_infer is not modified.
     Why:     One fixed output shape for batch runs and the stage 3 API; probability feeds apply_fallback.
     """
+    if not isinstance(X_infer, pd.DataFrame):
+        raise TypeError(f"run_inference: X_infer must be a pandas DataFrame, got {type(X_infer).__name__}. "
+                        "Column names and order must match the training data.")
+    if not hasattr(model, "predict"):
+        raise TypeError(f"run_inference: model must have a predict method, got {type(model).__name__}. "
+                        "Load the fitted pipeline with utils.load_model.")
     if len(X_infer) == 0:
         raise ValueError("run_inference: X_infer is empty. Check the inference data was loaded and filtered correctly.")
     preds = pd.DataFrame({"prediction": model.predict(X_infer)}, index=X_infer.index)

@@ -127,7 +127,7 @@ conda activate mlops-group2
 ## Get the data
 The pipeline never downloads data. Use the `prices.csv` that Ricardo shares with the team. It is not in Git, because Yahoo's API is for personal use only.
 
-1. Put it at `data/raw/prices.csv`.
+1. Create the folders (Git does not keep empty folders): `mkdir -p data/raw data/inference` (Windows: `mkdir data\raw data\inference`). Put the file at `data/raw/prices.csv`.
 2. Check its SHA-256 against the one in `TEAM_BRIEF.md`. On Windows: `certutil -hashfile data\raw\prices.csv SHA256`. On Mac or Linux: `shasum -a 256 data/raw/prices.csv`.
 3. The run also reads `data/inference/prices_latest.csv`, the last 300 trading days of the same snapshot. Ask Ricardo for it too.
 

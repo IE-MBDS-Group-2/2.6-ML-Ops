@@ -51,6 +51,7 @@ features:
 model:                           # DECISION D5
   params:
     max_iter: 1000
+    solver: "lbfgs"
     class_weight: "balanced"
   random_state: 42
 

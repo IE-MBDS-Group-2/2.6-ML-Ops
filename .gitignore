@@ -33,13 +33,10 @@ data/**
 !data/raw/
 !data/processed/
 !data/inference/
-!data/**/.gitkeep
-!data/**/README.md
 
 # Generated outputs (recreated by: python -m src.main)
 models/**
 !models/
-!models/README.md
 reports/**
 !reports/
 !reports/README.md

@@ -78,7 +78,7 @@ def test_unit_train_model_logs_class_counts(caplog):
 def test_unit_train_model_raises_on_bad_problem_type():
     X, y = make_data()
     with pytest.raises(ValueError, match="problem_type"):
-        train.train_model(X, y, make_preprocessor(), "regression", MODEL_PARAMS)
+        train.train_model(X, y, make_preprocessor(), "clustering", MODEL_PARAMS)
 
 
 @pytest.mark.parametrize("cut_x, cut_y, message", [
@@ -106,3 +106,14 @@ def test_integration_preprocessor_then_train_then_saved_model_predicts_the_same(
     utils.save_model(model, path)
     reloaded = utils.load_model(path)
     assert np.array_equal(model.predict(X), reloaded.predict(X))
+
+
+def test_unit_train_model_regression_fits_ridge_and_predicts_floats():
+    """problem_type "regression" picks Ridge from the settings and predicts one float per row."""
+    X, _ = make_data()
+    y = pd.Series(np.linspace(0.0, 1.0, len(X)), name="reward")
+    model = train.train_model(X, y, make_preprocessor(), "regression")
+    assert type(model.named_steps["model"]).__name__ == "Ridge"
+    predictions = model.predict(X)
+    assert len(predictions) == len(X)
+    assert predictions.dtype.kind == "f"

@@ -29,8 +29,8 @@ TICKER_COLUMN = "ticker"
 def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> pd.DataFrame:
     """Return a cleaned copy of the raw long price table.
 
-    Inputs:  df_raw, one row per (date, ticker); target_column, unused because the price file has no
-             target, kept so the signature matches the course contract.
+    Inputs:  df_raw, one row per (date, ticker); target_column, given in training mode (rows with no target are
+             dropped), None in inference mode (no rows dropped for a target). Prices have no target.
     Outputs: new DataFrame with lowercase column names, a datetime date column, sorted by date then
              ticker, exact duplicate rows removed, and a fresh 0..n-1 index. Rows that share a
              (date, ticker) but differ in a value are KEPT: choosing one would be a silent fix, so
@@ -38,17 +38,35 @@ def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> p
     Why:     later steps rely on consistent names, real dates and a stable order; exact duplicates
              would double-count a day.
     """
-    del target_column  # contract parameter, not used for price data
-
     df = df_raw.copy()
-    df.columns = [str(column).strip().lower() for column in df.columns]
-    df[DATE_COLUMN] = pd.to_datetime(df[DATE_COLUMN])
+    df.columns = [str(column).strip().lower().replace(" ", "_") for column in df.columns]
+    if DATE_COLUMN in df.columns:
+        df[DATE_COLUMN] = pd.to_datetime(df[DATE_COLUMN])
 
     n_before = len(df)
     df = df.drop_duplicates()
-    logger.info("Dropped %d exact duplicate rows out of %d", n_before - len(df), n_before)
+    _log_dropped("exact duplicate", n_before, len(df))
 
-    return df.sort_values([DATE_COLUMN, TICKER_COLUMN]).reset_index(drop=True)
+    if target_column is not None:
+        if target_column not in df.columns:
+            raise ValueError(f"Target column '{target_column}' is missing. "
+                             "Check problem.target_column in config.yaml.")
+        n_before = len(df)
+        df = df.dropna(subset=[target_column])
+        _log_dropped(f"missing-{target_column}", n_before, len(df))
+
+    order = [column for column in (DATE_COLUMN, TICKER_COLUMN) if column in df.columns]
+    if order:
+        df = df.sort_values(order)
+    return df.reset_index(drop=True)
+
+
+def _log_dropped(kind: str, before: int, after: int) -> None:
+    """Warn when rows were dropped, with the counts before and after, so nothing vanishes silently."""
+    if after < before:
+        logger.warning("Dropped %d %s rows: %d before, %d after", before - after, kind, before, after)
+    else:
+        logger.info("No %s rows dropped (%d rows)", kind, before)
 
 
 def to_wide(df: pd.DataFrame, value_column: str, tickers: list[str]) -> pd.DataFrame:

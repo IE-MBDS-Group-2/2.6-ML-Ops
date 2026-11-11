@@ -93,3 +93,31 @@ def test_integration_clean_output_passes_validate():
         tickers=["SPY", "EFA"],
         max_abs_daily_return=0.25,
     )
+
+
+def test_unit_clean_dataframe_training_mode_drops_rows_without_target():
+    """Training mode (target_column given): 3 rows, 1 with no label, gives 2 rows."""
+    raw = pd.DataFrame({"x": [1.0, 2.0, 3.0], "label": [0.0, None, 1.0]})
+    clean = clean_data.clean_dataframe(raw, target_column="label")
+    assert len(clean) == 2
+    assert clean.index.tolist() == [0, 1]
+
+
+def test_unit_clean_dataframe_inference_mode_keeps_every_row():
+    """Inference mode (target_column None): no row is dropped for a missing label."""
+    raw = pd.DataFrame({"x": [1.0, 2.0, 3.0], "label": [0.0, None, 1.0]})
+    assert len(clean_data.clean_dataframe(raw)) == 3
+
+
+def test_unit_clean_dataframe_missing_target_column_raises():
+    """Training mode needs the target column: name it in the error."""
+    with pytest.raises(ValueError, match="label"):
+        clean_data.clean_dataframe(pd.DataFrame({"x": [1.0]}), target_column="label")
+
+
+def test_unit_clean_dataframe_works_without_date_and_ticker_columns():
+    """Generic columns: names become snake case, the input is untouched, nothing else is assumed."""
+    raw = pd.DataFrame({" Feature One ": [2.0, 1.0], "Label": [1, 0]})
+    clean = clean_data.clean_dataframe(raw)
+    assert list(clean.columns) == ["feature_one", "label"]
+    assert list(raw.columns) == [" Feature One ", "Label"]

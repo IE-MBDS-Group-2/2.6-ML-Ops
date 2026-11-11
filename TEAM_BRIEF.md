@@ -8,7 +8,7 @@ Feature groups:
 - state: `w_<T>`, `drift_<T>`, `drawdown`, `weeks_since_rebalance`, `full_rebalance_cost` -> median impute + standard scale (built in `portfolio.py`)
 - market: `ret_4w_<T>`, `ret_12w_<T>`, `vol_20d_<T>` -> median impute + standard scale (built in `features.py`, no look-ahead)
 Excluded columns: `decision_date` (ID); future window returns (they would leak the label)
-Model: LogisticRegression, multinomial, `class_weight="balanced"`, `max_iter=1000`, `random_state=42`
+Model: LogisticRegression, multinomial, `class_weight="balanced"`, `max_iter=1000`, `solver="lbfgs"`, `random_state=42` (Ridge when `problem_type` is "regression")
 Metric: `max_drawdown_reduction`, key in the evaluation output: `"max_drawdown_reduction"`, quality gate: >= 0.20 on validation (2020-2021). Also reported: `accuracy`, `f1_macro`, `max_drawdown`, `annual_return`, `annual_volatility`, `sharpe`, `annual_trading_cost`
 Split: by date. Train 2007-09-07 to 2019-12-31 (includes 2008), validation 2020-2021, test 2022-2025 (sealed). The contract `split_data` is kept and tested; the pipeline uses `_split_by_date`
 Validation rules: required columns present; no empty data; all 5 tickers present; every ticker has the same dates; close > 0; volume >= 0; |daily return| <= 0.25. Any failure stops the pipeline (bad data must not train a model)

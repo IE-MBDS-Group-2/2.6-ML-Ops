@@ -19,7 +19,7 @@ import logging
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import Pipeline
 
 logger = logging.getLogger(__name__)
@@ -29,13 +29,19 @@ def evaluate_model(model: Pipeline, X_eval: pd.DataFrame, y_eval: pd.Series, pro
     """Score a fitted pipeline on a held-out split.
 
     Inputs:  model: fitted pipeline; X_eval, y_eval: validation (or, once, test) features and labels;
-             problem_type: "classification" (the stage 2 model predicts the best action 0.0 / 0.5 / 1.0).
-    Outputs: {"accuracy", "f1_macro"} as plain Python floats.
+             problem_type: "classification" (the stage 2 model predicts the best action 0.0 / 0.5 / 1.0)
+             or "regression".
+    Outputs: {"accuracy", "f1_macro"} for classification, {"rmse", "mae", "r2"} for regression, as
+             plain Python floats.
     Why:     f1_macro weighs the three actions equally, so a model that always says "do nothing" scores badly
              even if that action is the most common one.
     """
-    if problem_type != "classification":
-        raise ValueError(f"evaluate_model: problem_type must be 'classification', got '{problem_type}'.")
+    if not hasattr(model, "predict"):
+        raise TypeError(f"evaluate_model: model must have a predict method, got {type(model).__name__}. "
+                        "Pass the fitted pipeline from train_model.")
+    if problem_type not in ("classification", "regression"):
+        raise ValueError(f"evaluate_model: problem_type must be 'classification' or 'regression', "
+                         f"got '{problem_type}'.")
     if len(X_eval) == 0:
         raise ValueError("evaluate_model: X_eval is empty. Check the validation split dates in config.yaml.")
     if len(X_eval) != len(y_eval):
@@ -43,6 +49,8 @@ def evaluate_model(model: Pipeline, X_eval: pd.DataFrame, y_eval: pd.Series, pro
             f"evaluate_model: X_eval and y_eval must have the same number of rows, got {len(X_eval)} and "
             f"{len(y_eval)}. Check the split keeps features and labels aligned."
         )
+    if problem_type == "regression":
+        return _regression_metrics(model, X_eval, y_eval)
     # Actions 0.0 / 0.5 / 1.0 are categories, but sklearn reads 0.5 as a continuous number and refuses to score it.
     # Comparing them as text keeps the metrics correct whatever numeric or text encoding the labels use.
     y_true = pd.Series(y_eval).astype(str).to_numpy()
@@ -52,6 +60,19 @@ def evaluate_model(model: Pipeline, X_eval: pd.DataFrame, y_eval: pd.Series, pro
         "f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
     }
     logger.info("Scored %d rows: accuracy %.4f, f1_macro %.4f", len(X_eval), result["accuracy"], result["f1_macro"])
+    return result
+
+
+def _regression_metrics(model: Pipeline, X_eval: pd.DataFrame, y_eval: pd.Series) -> dict[str, float]:
+    """Fixed regression metrics: rmse, mae and r2, as plain floats."""
+    y_pred = model.predict(X_eval)
+    result = {
+        "rmse": float(np.sqrt(mean_squared_error(y_eval, y_pred))),
+        "mae": float(mean_absolute_error(y_eval, y_pred)),
+        "r2": float(r2_score(y_eval, y_pred)),
+    }
+    logger.info("Scored %d rows: rmse %.4f, mae %.4f, r2 %.4f",
+                len(X_eval), result["rmse"], result["mae"], result["r2"])
     return result
 
 
