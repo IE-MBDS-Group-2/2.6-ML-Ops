@@ -241,7 +241,6 @@ def test_unit_best_action_is_full_rebalance_before_a_crash_in_the_overweight_etf
     assert table.loc["2024-01-12", "best_action"] == 1.0
 
 
-@pytest.mark.skip(reason="Awaiting features in dev")
 def test_integration_market_features_then_decision_table():
     from src import features  # pylint: disable=import-outside-toplevel
 
