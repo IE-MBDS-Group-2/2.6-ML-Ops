@@ -84,7 +84,6 @@ def test_unit_to_wide_raises_on_missing_ticker():
         clean_data.to_wide(make_clean_long(), "close", ["SPY", "EFA", "GLD"])
 
 
-@pytest.mark.skip(reason="Awaiting validate in dev")
 def test_integration_clean_output_passes_validate():
     """Whatever clean_dataframe returns must be accepted by the quality gate."""
     cleaned = clean_data.clean_dataframe(make_raw_prices())
