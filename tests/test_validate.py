@@ -6,7 +6,8 @@ import pytest
 from src import clean_data, validate
 
 REQUIRED = ["date", "ticker", "close", "volume"]
-COLUMNS = {"date": "date", "ticker": "ticker", "close": "close", "volume": "volume"}  # config data.columns
+COLUMNS = {"date_column": "date", "ticker_column": "ticker", "close_column": "close",
+           "volume_column": "volume"}  # config data.columns
 TICKERS = ["SPY", "EFA"]
 
 
@@ -170,8 +171,9 @@ def test_unit_validate_raises_when_a_configured_price_column_is_missing():
 
 
 def test_unit_validate_uses_the_configured_column_names():
-    renamed = {"date": "day", "ticker": "symbol", "close": "px", "volume": "qty"}
-    table = make_valid_long().rename(columns=renamed)
+    old_to_new = {"date": "day", "ticker": "symbol", "close": "px", "volume": "qty"}
+    renamed = {f"{old}_column": new for old, new in old_to_new.items()}
+    table = make_valid_long().rename(columns=old_to_new)
     assert validate.validate_dataframe(table, list(renamed.values()), tickers=TICKERS, max_abs_daily_return=0.25,
                                        price_columns=renamed)
     table.loc[0, "px"] = -1.0
@@ -182,3 +184,17 @@ def test_unit_validate_uses_the_configured_column_names():
 def test_unit_validate_raises_type_error_on_non_dataframe():
     with pytest.raises(TypeError, match="expects a pandas DataFrame"):
         validate.validate_dataframe([1, 2, 3], required_columns=[])
+
+
+@pytest.mark.parametrize("extra", [{"tickers": TICKERS}, {"max_abs_daily_return": 0.25}])
+def test_unit_validate_raises_when_a_price_rule_is_asked_for_without_price_columns(extra):
+    # A rule that cannot run must stop the caller, not pass silently.
+    with pytest.raises(ValueError, match="need price_columns"):
+        validate.validate_dataframe(make_valid_long(), required_columns=REQUIRED, **extra)
+
+
+def test_unit_validate_reports_a_missing_price_column_before_any_row_message():
+    table = make_valid_long().drop(columns="ticker")
+    table.loc[0, "close"] = None
+    with pytest.raises(ValueError, match=r"Price columns \['ticker'\] are missing"):
+        validate.validate_dataframe(table, required_columns=["close"], price_columns=COLUMNS)

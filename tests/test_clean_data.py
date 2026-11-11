@@ -94,7 +94,8 @@ def test_integration_clean_output_passes_validate():
         required_columns=["date", "ticker", "close", "volume"],
         tickers=["SPY", "EFA"],
         max_abs_daily_return=0.25,
-        price_columns={"date": "date", "ticker": "ticker", "close": "close", "volume": "volume"},
+        price_columns={"date_column": "date", "ticker_column": "ticker", "close_column": "close",
+                       "volume_column": "volume"},
     )
 
 
@@ -129,3 +130,10 @@ def test_unit_clean_dataframe_works_without_date_and_ticker_columns():
 def test_unit_clean_dataframe_raises_type_error_on_non_dataframe():
     with pytest.raises(TypeError, match="expects a pandas DataFrame"):
         clean_data.clean_dataframe([{"date": "2024-01-02"}])
+
+
+def test_unit_clean_dataframe_matches_configured_names_after_tidying():
+    raw = pd.DataFrame({"Date": ["2024-01-03", "2024-01-02"], "Ticker": ["SPY", "SPY"], "Close": [2.0, 1.0]})
+    clean = clean_data.clean_dataframe(raw, date_column="Date", sort_by=["Date", "Ticker"])
+    assert pd.api.types.is_datetime64_any_dtype(clean["date"])
+    assert clean["close"].tolist() == [1.0, 2.0]

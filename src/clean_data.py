@@ -30,7 +30,8 @@ def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None, date
     Inputs:  df_raw, one row per (date, ticker); target_column, given in training mode (rows with no target are
              dropped), None in inference mode (no rows dropped for a target). Prices have no target.
              date_column, parsed to datetime if given; sort_by, columns to sort on if given (both from
-             config data.columns; None leaves the table as it is).
+             config data.columns; None leaves the table as it is). Names are matched after tidying, so
+             "Date" in the config finds the column "date".
     Outputs: new DataFrame with lowercase column names, a datetime date column, sorted by date then
              ticker, exact duplicate rows removed, and a fresh 0..n-1 index. Rows that share a
              (date, ticker) but differ in a value are KEPT: choosing one would be a silent fix, so
@@ -43,8 +44,9 @@ def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None, date
         raise TypeError(f"clean_dataframe expects a pandas DataFrame, got {type(df_raw).__name__}. "
                         "Pass the output of load_raw_data.")
     df = df_raw.copy()
-    df.columns = [str(column).strip().lower().replace(" ", "_") for column in df.columns]
-    if date_column is not None and date_column in df.columns:
+    df.columns = [_tidy_name(column) for column in df.columns]
+    date_column = None if date_column is None else _tidy_name(date_column)
+    if date_column in df.columns:
         df[date_column] = pd.to_datetime(df[date_column])
 
     n_before = len(df)
@@ -52,17 +54,29 @@ def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None, date
     _log_dropped("exact duplicate", n_before, len(df))
 
     if target_column is not None:
-        if target_column not in df.columns:
-            raise ValueError(f"Target column '{target_column}' is missing. "
-                             "Check problem.target_column in config.yaml.")
-        n_before = len(df)
-        df = df.dropna(subset=[target_column])
-        _log_dropped(f"missing-{target_column}", n_before, len(df))
+        df = _drop_rows_without_target(df, target_column)
+    return _sorted(df, sort_by).reset_index(drop=True)
 
-    order = [column for column in (sort_by or []) if column in df.columns]
-    if order:
-        df = df.sort_values(order)
-    return df.reset_index(drop=True)
+
+def _sorted(df: pd.DataFrame, sort_by: list[str] | None) -> pd.DataFrame:
+    """Sort on the sort_by columns that exist (names tidied first); no sort_by leaves the order as it is."""
+    order = [name for name in map(_tidy_name, sort_by or []) if name in df.columns]
+    return df.sort_values(order) if order else df
+
+
+def _drop_rows_without_target(df: pd.DataFrame, target_column: str) -> pd.DataFrame:
+    """Training mode: drop rows with no target value, and log how many; raise if the column is absent."""
+    if target_column not in df.columns:
+        raise ValueError(f"Target column '{target_column}' is missing. "
+                         "Check problem.target_column in config.yaml.")
+    kept = df.dropna(subset=[target_column])
+    _log_dropped(f"missing-{target_column}", len(df), len(kept))
+    return kept
+
+
+def _tidy_name(name: object) -> str:
+    """One spelling for a column name: no outer spaces, lowercase, underscores (" Close Price " -> close_price)."""
+    return str(name).strip().lower().replace(" ", "_")
 
 
 def _log_dropped(kind: str, before: int, after: int) -> None:
