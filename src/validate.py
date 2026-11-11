@@ -37,8 +37,8 @@ def validate_dataframe(
     """Stop the pipeline if the clean price table is not trustworthy.
 
     Inputs:  df, clean long table from clean_dataframe; required_columns, columns that must
-             exist; target_column, unused (price data has no target), kept for the course
-             contract; tickers, ETFs that must be present (None skips the check);
+             exist; target_column, the label that must be present and complete in training
+             data (None for prices and inference); tickers, ETFs that must be present (None skips the check);
              max_abs_daily_return, largest believable one-day move, e.g. 0.25 (None skips it).
     Outputs: True when every check passes.
     Why:     catching bad data here is cheap; finding it after training is not.
@@ -46,8 +46,6 @@ def validate_dataframe(
              table, missing close or volume values, conflicting (date, ticker) rows, absent
              ticker, a ticker with fewer dates, close <= 0, volume < 0, an extreme daily return.
     """
-    del target_column  # contract parameter, not used for price data
-
     missing = [column for column in required_columns if column not in df.columns]
     if missing:
         raise ValueError(
@@ -58,6 +56,8 @@ def validate_dataframe(
             "The price table is empty. Check that the raw file has rows and was loaded correctly."
         )
 
+    if target_column is not None:
+        _check_target(df, target_column)
     _check_no_missing_values(df)
     _check_one_row_per_date_ticker(df)
     if tickers is not None:
@@ -69,6 +69,16 @@ def validate_dataframe(
 
     logger.info("Validated %d rows for %d tickers", len(df), df[TICKER_COLUMN].nunique())
     return True
+
+
+def _check_target(df: pd.DataFrame, target_column: str) -> None:
+    """Raise if the target is absent or has empty values (training data only; prices have no target)."""
+    if target_column not in df.columns:
+        raise ValueError(f"Target column '{target_column}' is missing. Check problem.target_column in config.yaml.")
+    empty = int(df[target_column].isna().sum())
+    if empty:
+        raise ValueError(f"{empty} rows have no value in target column '{target_column}'. "
+                         "Drop them in clean_dataframe (training mode) or fix the source data.")
 
 
 def _first_row(rows: pd.DataFrame) -> str:

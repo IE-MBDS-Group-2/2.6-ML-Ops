@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.dummy import DummyClassifier
+from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.pipeline import Pipeline
 
 from src import evaluate, features, train
@@ -147,9 +147,9 @@ def test_unit_evaluate_model_mismatched_lengths_raises():
 
 
 def test_unit_evaluate_model_unknown_problem_type_raises():
-    """Stage 2 is a classifier; any other problem_type is a config error."""
+    """Stage 2 is a classifier; any other problem_type (e.g. clustering) is a config error."""
     with pytest.raises(ValueError, match="problem_type"):
-        evaluate.evaluate_model(_always_one_model(), pd.DataFrame({"x": [0.0]}), pd.Series([1.0]), "regression")
+        evaluate.evaluate_model(_always_one_model(), pd.DataFrame({"x": [0.0]}), pd.Series([1.0]), "clustering")
 
 
 def test_integration_train_model_scored_by_evaluate_model():
@@ -160,3 +160,19 @@ def test_integration_train_model_scored_by_evaluate_model():
     result = evaluate.evaluate_model(model, X, y, "classification")
     assert 0.0 <= result["accuracy"] <= 1.0
     assert 0.0 <= result["f1_macro"] <= 1.0
+
+
+def test_unit_evaluate_model_regression_known_values():
+    """A model predicting the mean of [0, 2] scores rmse 1.0, mae 1.0 and r2 0.0."""
+    X = pd.DataFrame({"x": [0.0, 1.0]})
+    y = pd.Series([0.0, 2.0])
+    model = Pipeline([("model", DummyRegressor(strategy="mean"))]).fit(X, y)
+    result = evaluate.evaluate_model(model, X, y, "regression")
+    assert result == pytest.approx({"rmse": 1.0, "mae": 1.0, "r2": 0.0})
+    assert all(isinstance(value, float) for value in result.values())
+
+
+def test_unit_evaluate_model_without_predict_raises_type_error():
+    """An object with no predict method is not a model: fail with a TypeError that says so."""
+    with pytest.raises(TypeError, match="predict"):
+        evaluate.evaluate_model(object(), pd.DataFrame({"x": [0.0]}), pd.Series([1.0]), "classification")

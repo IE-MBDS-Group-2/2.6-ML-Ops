@@ -132,3 +132,15 @@ def test_integration_saved_model_round_trip_then_run_inference(tmp_path):
     loaded = utils.load_model(path)
     pd.testing.assert_frame_equal(infer.run_inference(loaded, _X_infer(), include_proba=True),
                                   infer.run_inference(model, _X_infer(), include_proba=True))
+
+
+def test_unit_run_inference_rejects_non_dataframe_input():
+    """A NumPy array loses column names and order: require a DataFrame."""
+    with pytest.raises(TypeError, match="DataFrame"):
+        infer.run_inference(_prior_model(), _X_infer().to_numpy())
+
+
+def test_unit_run_inference_rejects_model_without_predict():
+    """An object with no predict method is not a model: fail with a TypeError that says so."""
+    with pytest.raises(TypeError, match="predict"):
+        infer.run_inference(object(), _X_infer())
