@@ -22,4 +22,4 @@ jobs:
       - name: flake8
         run: flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
       - name: pytest with branch coverage
-        run: pytest --cov=src --cov-branch --cov-report=term-missing
+        run: pytest --cov=src --cov-branch --cov-report=term-missing --cov-fail-under=90

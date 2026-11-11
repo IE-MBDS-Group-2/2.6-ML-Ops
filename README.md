@@ -27,7 +27,7 @@ Move the balanced portfolio's max drawdown from the baseline by a reduction set 
 
 | Type | Metric (exact name) | Baseline | Target or threshold |
 | --- | --- | --- | --- |
-| Business KPI | max drawdown | To be measured | Set after the feasibility check (aspiration: at least 20% smaller) |
+| Business KPI | max drawdown | Today's rule: -18.7% (validation 2020 to 2021). Stage 2 model: -19.6%; `max_drawdown_reduction` -0.047, gate not met | Set after the feasibility check (aspiration: at least 20% smaller) |
 | ML metric | `max_drawdown_reduction` (higher is better): 1 - agent max drawdown / baseline max drawdown, both as losses, so 0.20 means a 20% smaller worst loss. Quality gate, measured on validation 2020 to 2021 against today's rule | 0 (today's rule) | `>=` 0.20 |
 | Guard | annual net return | To be measured | No more than 0.25 percentage points below baseline |
 | Guard | annual trading cost | To be measured | No more than 2 x baseline |
@@ -112,69 +112,71 @@ Scales to (ideas, not findings): the firm's conservative and growth model portfo
 ---
 
 # 2.6-ML-Ops
-2.6 - Machine Learning Ops Team Repository for IE MBDS April 26 Intake.
 
----
+## Project
+Weekly rebalancing advice for a balanced 5-ETF portfolio (SPY, EFA, IEF, GLD, BIL). A classifier predicts the best action each Friday: move 0%, 50% or 100% of the way back to the target weights. If the model is unsure, today's rule applies instead.
 
-# MLOps Project Skeleton (reference only)
+The Stage 2 quality gate is `max_drawdown_reduction >= 0.20` on validation (2020 to 2021). On the current data the gate is not met (see section 1).
 
-This repo is a **map, not a codebase**. Every file is a placeholder: no code, only a short note on
-what the file does, where it sits in the pipeline and which files it talks to.
-
-Create the same folders and files in **your own** project repo, then write the code for **your** use case.
-
-## Stages = branches
-
-| Branch | Stage | Sessions | What it adds |
-|---|---|---|---|
-| `main` (you are here) | 1. Kickoff | 1 to 3 | Folder structure, business case, one placeholder per pipeline step |
-| `stage-2-modular` | 2. Modular code | 4 to 9 | Tests, style and test settings, first CI (Continuous Integration) workflow |
-| `stage-3-cicd` | 3. CI/CD | 10 to 14 | Config loader, logging, experiment tracking, API, Docker, deployment |
-
-Tip: on GitHub, open **Compare** (`main...stage-2-modular`) to see exactly what each stage adds.
-
-## The pipeline at a glance
-
-```text
-                           main.py  (orchestrator, one command)
-                              |
- data/raw/ -> load_data -> clean_data -> validate -> split -> features -> train -> evaluate
-                                                (train/val/test) (recipe)   (fit)   (val split)
-                                                                              |
-                     reports/predictions.csv <- infer <- models/model.joblib (save)
+## Install
+```bash
+conda env create -f environment.yml
+conda activate mlops-group2
 ```
 
-## Stage 1 structure
+## Get the data
+The pipeline never downloads data. Use the `prices.csv` that Ricardo shares with the team. It is not in Git, because Yahoo's API is for personal use only.
 
+1. Put it at `data/raw/prices.csv`.
+2. Check its SHA-256 against the one in `TEAM_BRIEF.md`. On Windows: `certutil -hashfile data\raw\prices.csv SHA256`. On Mac or Linux: `shasum -a 256 data/raw/prices.csv`.
+3. The run also reads `data/inference/prices_latest.csv`, the last 300 trading days of the same snapshot. Ask Ricardo for it too.
+
+Run `python scripts/fetch_prices.py` only to make a new snapshot. Downloads differ over time, so a new file has a different checksum and gives different results.
+
+## Run
+```bash
+python -m src.main
+```
+One command runs every step and writes these files. Git ignores them.
+
+| File | What it is |
+| --- | --- |
+| `data/processed/clean.csv` | cleaned prices |
+| `models/model.joblib` | the fitted model |
+| `reports/predictions.csv` | one recommendation per decision date, with a fallback flag |
+| `reports/metrics.json` | validation scores, model against today's rule, and the gate result |
+
+The log (`logs/pipeline.log`) says "Quality gate met" or "NOT met". If the data or config is wrong, the run stops with exit code 1 and says what to fix.
+
+The predictions use the inference file, which ends in 2025. They are a demo of the output, not out-of-sample evidence.
+
+## Test
+```bash
+pytest --cov=src --cov-branch
+flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
+```
+GitHub Actions runs both on every pull request and requires at least 90% coverage. Keep code lines at 100 characters or fewer.
+
+## Repo structure
 ```text
 .
-├── README.md                 # business case, success metrics, how to run
-├── config.yaml               # non-secret settings (paths, target, split sizes)
-├── environment.yml           # dependencies (conda)
-├── .env.example              # names of secrets, never real values
-├── .gitignore                # keeps data, secrets and generated files out of Git
-├── LICENSE
-├── .github/
-│   └── pull_request_template.md
-├── notebooks/                # the "lab": exploration only
-├── src/                      # the "factory": one job per module
-│   ├── load_data.py          # 1. read raw data
-│   ├── clean_data.py         # 2. stateless cleaning
-│   ├── validate.py           # 3. data quality gate
-│   ├── features.py           # 4. unfitted feature recipe
-│   ├── train.py              # 5. fit the pipeline
-│   ├── evaluate.py           # 6. metrics on unseen data
-│   ├── infer.py              # 7. predictions on new data
-│   ├── utils.py              # shared read and write helpers
-│   └── main.py               # 0. orchestrator: python -m src.main
-├── data/  raw/ processed/ inference/
-├── models/                   # saved model (generated)
-├── reports/                  # predictions, plots (generated)
-└── tests/                    # automated tests (stage 2)
+├── README.md             # business case (section 1) and how to run
+├── TEAM_BRIEF.md         # agreed settings, decisions, owners
+├── config.yaml           # every non-secret setting
+├── environment.yml       # conda environment
+├── docs/                 # MODULE_SPECS.md: the module contract
+├── scripts/              # fetch_prices.py: makes the price snapshot
+├── src/                  # one module per job, main.py runs them all
+├── tests/                # automated tests
+└── .github/workflows/    # ci.yml: lint-and-test
 ```
 
-## How to use this skeleton
-
-1. Open a file and read its note
-2. Create the equivalent file in your repo
-3. Write your own code: the note describes the job, not the solution
+## Team and module owners
+| Owner | Modules |
+| --- | --- |
+| Ricardo Arciniegas (@rarciniegascueva) | `utils`, `load_data`, `scripts/fetch_prices.py`, README section 1 |
+| Tate Bothner (@tatebothner) | `clean_data`, `validate` |
+| Farah (@faalnuseiratie) | `features` |
+| Riccardo Bellini (@riccbell) | `portfolio`, `train` |
+| Raja Akel (@raja-akel) | `evaluate`, `infer` |
+| Miguel Palanca (@Smiggus) | `main`, `costs`, CI, release |

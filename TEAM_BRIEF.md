@@ -17,7 +17,7 @@ features.py signature: `get_feature_preprocessor(numeric_columns)`; `compute_mar
 Agreed extra parameters: `validate_dataframe(..., tickers=None, max_abs_daily_return=None)`; `clean_data.to_wide(df, value_column, tickers)`; `infer.apply_fallback(preds, rule_actions, missing_input, min_probability=0.60)`
 utils.py helpers: load_csv, save_csv, save_model, load_model, save_json
 Environment: pandas, numpy, scikit-learn, joblib, pyyaml, yfinance (fetch script only), pytest, pytest-cov, flake8, pylint, radon, black, isort, detect-secrets
-Data snapshot: `data/raw/prices.csv` (made by `scripts/fetch_prices.py`), shared directly with the team (WhatsApp) by Ricardo A., not committed to Git (decision D4; Yahoo's API is for personal use only; how the professor receives it is to be confirmed with the professor). SHA-256: [to fill]
+Data snapshot: `data/raw/prices.csv` (made by `scripts/fetch_prices.py`), shared directly with the team (WhatsApp) by Ricardo A., not committed to Git (decision D4; Yahoo's API is for personal use only; how the professor receives it is to be confirmed with the professor). SHA-256: 3ada61c6a3cc037e74537f9fa8a739eb2c0c67cc866e95eeb039fad7bf0c6c71 (4,679 trading days per ticker, 2007-05-30 to 2025-12-31, downloaded 11 Nov 2026)
 Decisions:
 - Stage 2 model is a classifier of the best next-week action; the RL agent is Stage 3 (D0)
 - Gate on `max_drawdown_reduction` on validation; guards reported, not gated (D2)
