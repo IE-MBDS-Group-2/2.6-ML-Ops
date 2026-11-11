@@ -4,3 +4,12 @@
 
 [FORMAT]
 max-line-length=120
+
+[BASIC]
+# Course-contract argument names (X_train, X_eval, X_infer, ...) are fixed by the course.
+good-names=X,X_rest,X_train,X_val,X_test,X_eval,X_infer
+
+[DESIGN]
+# The course contract fixes 6 arguments for split_data and train_model.
+max-args=6
+max-positional-arguments=6
