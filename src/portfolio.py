@@ -253,8 +253,98 @@ def simulate(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_feature
                            **{f"w_{ticker}": book["weights"][ticker] for ticker in run["target"].index}})
         if day in run["decisions"]:
             decision_rows.append(_decide(day, book, run, policy, cfg))
+    return _finish(run, daily_rows, decision_rows)
+
+
+def _finish(run: dict, daily_rows: list[dict], decision_rows: list[pd.Series]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Turn the loop's rows into the daily and decision frames, and log a one-line summary."""
     daily = pd.DataFrame(daily_rows, index=pd.DatetimeIndex(run["days"], name="date"))
     decisions = pd.DataFrame(decision_rows).rename_axis("decision_date")
     logger.info("Simulated %d days and %d decisions: final value %.4f, total cost %.6f",
                 len(daily), len(decisions), daily["value"].iloc[-1], daily["cost_paid"].sum())
     return daily, decisions
+
+
+def _hold(weights: pd.Series, returns_block: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Buy and hold over a block of days: cumulative growth on each day, and the drifted weights at the end."""
+    paths = (1.0 + returns_block).cumprod()
+    growth = (paths * weights).sum(axis=1)
+    return growth, weights * paths.iloc[-1] / growth.iloc[-1]
+
+
+def _window_start(state: dict, pre_block: pd.DataFrame) -> dict:
+    """Drift the decision-day state over (t, e] to the execution close e, the same for every action."""
+    pre_growth, weights_e = _hold(state["weights"], pre_block)
+    value = state["value"] * pre_growth.iloc[-1]
+    peak = max(state["peak"], state["value"] * pre_growth.max())
+    return {"weights": weights_e, "value": value, "peak": peak, "drawdown": value / peak - 1.0, "adv": state["adv"]}
+
+
+def _reward(start: dict, action: float, window: pd.DataFrame, target: pd.Series, cfg: dict) -> float:
+    """reward = window return - cost - penalty_lambda x increase in drawdown during the window."""
+    cost = rebalance_cost(start["weights"], target, action, cfg["costs"]["aum"], start["adv"], cfg["costs"])
+    growth, _ = _hold(apply_action(start["weights"], target, action), window)
+    values = start["value"] * (1.0 - cost) * growth
+    drawdown = values / np.maximum(start["peak"], values.cummax()) - 1.0
+    deeper = max(0.0, start["drawdown"] - float(drawdown.min()))
+    return float(growth.iloc[-1]) - 1.0 - cost - cfg["portfolio"]["reward"]["penalty_lambda"] * deeper
+
+
+def _label(state: dict, blocks: tuple[pd.DataFrame, pd.DataFrame], target: pd.Series, cfg: dict) -> float:
+    """Try every action from one decision's state and return the one with the highest reward.
+
+    state:  weights, value, peak and adv at the close of decision day t.
+    blocks: daily returns on (t, e], before the trade, and on the reward window (e, next execution day].
+    Ties go to the smaller action (it trades less).
+    """
+    start = _window_start(state, blocks[0])
+    best_action, best_reward = np.nan, -np.inf
+    for action in sorted(cfg["portfolio"]["actions"]):
+        reward = _reward(start, action, blocks[1], target, cfg)
+        if reward > best_reward + _TIE_TOLERANCE:
+            best_action, best_reward = float(action), reward
+    return best_action
+
+
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments
+def _labels(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFrame, volume_wide: pd.DataFrame,
+            target: pd.Series, cfg: dict) -> pd.Series:
+    """best_action for every decision with a full reward window; NaN for the rest (the last one)."""
+    returns = close_wide[target.index].pct_change(fill_method=None)
+    adv = costs.average_daily_dollar_volume(close_wide[target.index], volume_wide[target.index],
+                                            cfg["costs"]["slippage"]["adv_window"])
+    peaks = daily["value"].cummax()
+    weight_columns = [f"w_{ticker}" for ticker in target.index]
+    labels = pd.Series(np.nan, index=decisions.index, name="best_action")
+    for decided, when in execution_schedule(daily.index, decisions.index).dropna().iterrows():
+        state = {"weights": decisions.loc[decided, weight_columns].set_axis(target.index).astype(float),
+                 "value": daily.at[decided, "value"], "peak": peaks.at[decided], "adv": adv.loc[decided]}
+        blocks = (returns.loc[decided:when["execution_date"]].iloc[1:],
+                  returns.loc[when["reward_start"]:when["reward_end"]])
+        labels.loc[decided] = _label(state, blocks, target, cfg)
+    return labels
+
+
+# The spec (docs/MODULE_SPECS.md) fixes these 7 arguments, so the project-wide limit of 6 is waived here only.
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments
+def build_decision_table(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_features: pd.DataFrame,
+                         target: pd.Series, start: str, end: str, cfg: dict) -> pd.DataFrame:
+    """The table the model learns from: one row per decision date, state + market features + label.
+
+    Inputs:  as simulate, without the policy: today's rule is the policy, so the states follow the path the
+             portfolio manager actually takes today.
+    Outputs: frame indexed by decision_date: w_<T>, drift_<T>, drawdown, weeks_since_rebalance,
+             full_rebalance_cost, the market features, rule_action (today's rule; NOT a model input, but
+             infer's fallback and the evaluation use it) and best_action (0.0, 0.5 or 1.0; NaN on the last
+             row, which has no full window: main drops it before training).
+    Why:     labels say which action would have done best one window ahead, net of costs and drawdown.
+    """
+    days = close_wide.index[close_wide.index <= pd.Timestamp(end)]
+    policy = make_current_rule_policy(target, decision_dates(days, start, end), cfg)
+    daily, decisions = simulate(close_wide, volume_wide, market_features, target, policy, start, end, cfg)
+    target = target.reindex(close_wide.columns)
+    table = decisions.rename(columns={"action": "rule_action"})
+    table["best_action"] = _labels(daily, decisions, close_wide, volume_wide, target, cfg)
+    logger.info("Decision table: %d rows, label counts %s", len(table),
+                table["best_action"].value_counts().sort_index().to_dict())
+    return table
