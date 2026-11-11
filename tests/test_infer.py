@@ -6,7 +6,7 @@ from sklearn.dummy import DummyClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.svm import LinearSVC
 
-from src import infer
+from src import infer, utils
 
 FRIDAYS = pd.to_datetime(["2021-01-08", "2021-01-15", "2021-01-22"])
 
@@ -118,11 +118,8 @@ def test_unit_apply_fallback_misaligned_index_raises():
 # ---------------------------------------------------------------- integration
 
 
-@pytest.mark.skip(reason="Awaiting utils.py in dev (issue #14)")
 def test_integration_saved_model_round_trip_then_run_inference(tmp_path):
     """A model saved and re-loaded with utils gives the same predictions as the original."""
-    from src import utils  # pylint: disable=import-outside-toplevel
-
     model = _prior_model()
     path = tmp_path / "model.joblib"
     utils.save_model(model, path)
