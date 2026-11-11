@@ -12,3 +12,26 @@
 #
 # Stage 2: the same values live in a SETTINGS dictionary at the top of src/main.py
 # Stage 3: main.py reads this file instead, with the same key names
+
+# -------------------------------------------------------------------
+# costs: execution costs, read by src/costs.py
+# -------------------------------------------------------------------
+costs:
+  # Capital allocated to the balanced MODEL PORTFOLIO (not the firm's total
+  # client assets). ASSUMPTION, placeholder until the team agrees a figure.
+  # Same currency as commission.min_fee. Everyone reads this one value.
+  aum: 100000000
+  # flat      = README baseline, 0.1% of value traded, ignores AUM and volume
+  # realistic = commission + slippage (asymmetric entry/exit + sqrt impact)
+  model: flat
+  flat:
+    rate: 0.001            # 0.1% of value traded (README)
+  commission:              # IBKR Pro EU retail schedule. ASSUMPTION: a firm this size would negotiate lower
+    rate: 0.0005           # 0.05% of trade value
+    min_fee: 1.25          # per trade, floor
+    cap: 0.01              # per trade, max 1% of trade value
+  slippage:                # ported from Argus AsymmetricVolumeSlippageModel. ASSUMPTIONS
+    entry_bps: 5.0         # buys
+    exit_bps: 10.0         # sells (reductions)
+    impact_factor: 2.0     # bps per sqrt(% of ADV), Almgren-Chriss form
+    adv_window: 20         # trading days for the trailing average daily dollar volume
