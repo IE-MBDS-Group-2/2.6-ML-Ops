@@ -34,3 +34,4 @@ dependencies:
   - pip
   - pip:
       - detect-secrets
+      - yfinance        # scripts/fetch_prices.py only (the pipeline never downloads)
