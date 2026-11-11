@@ -36,23 +36,30 @@ def validate_dataframe(
 ) -> bool:
     """Stop the pipeline if the clean price table is not trustworthy.
 
-    Inputs:  df, clean long table from clean_dataframe; required_columns, columns that must exist;
-             target_column, unused (price data has no target), kept for the course contract;
-             tickers, ETFs that must be present (None skips the check);
-             max_abs_daily_return, largest believable one-day move, e.g. 0.25 (None skips the check).
+    Inputs:  df, clean long table from clean_dataframe; required_columns, columns that must
+             exist; target_column, unused (price data has no target), kept for the course
+             contract; tickers, ETFs that must be present (None skips the check);
+             max_abs_daily_return, largest believable one-day move, e.g. 0.25 (None skips it).
     Outputs: True when every check passes.
     Why:     catching bad data here is cheap; finding it after training is not.
-    Raises:  ValueError naming the problem and how to fix it, for: missing columns, empty table,
-             absent ticker, a ticker with fewer dates, close <= 0, volume < 0, an extreme daily return.
+    Raises:  ValueError naming the problem and how to fix it, for: missing columns, empty
+             table, missing close or volume values, conflicting (date, ticker) rows, absent
+             ticker, a ticker with fewer dates, close <= 0, volume < 0, an extreme daily return.
     """
     del target_column  # contract parameter, not used for price data
 
     missing = [column for column in required_columns if column not in df.columns]
     if missing:
-        raise ValueError(f"Missing required columns {missing}. Check the raw file header and clean_dataframe.")
+        raise ValueError(
+            f"Missing required columns {missing}. Check the raw file header and clean_dataframe."
+        )
     if df.empty:
-        raise ValueError("The price table is empty. Check that the raw file has rows and was loaded correctly.")
+        raise ValueError(
+            "The price table is empty. Check that the raw file has rows and was loaded correctly."
+        )
 
+    _check_no_missing_values(df)
+    _check_one_row_per_date_ticker(df)
     if tickers is not None:
         _check_tickers_present(df, tickers)
     _check_same_number_of_dates(df)
@@ -64,12 +71,42 @@ def validate_dataframe(
     return True
 
 
+def _first_row(rows: pd.DataFrame) -> str:
+    """Describe the first offending row, e.g. 'first: SPY on 2024-01-03', so it can be found."""
+    first = rows.iloc[0]
+    return f"first: {first[TICKER_COLUMN]} on {first[DATE_COLUMN]:%Y-%m-%d}"
+
+
+def _check_no_missing_values(df: pd.DataFrame) -> None:
+    """Raise if close or volume has an empty (NaN) value; to_wide would otherwise drop the date."""
+    is_missing = df[[CLOSE_COLUMN, VOLUME_COLUMN]].isna()
+    columns = [column for column in (CLOSE_COLUMN, VOLUME_COLUMN) if is_missing[column].any()]
+    if columns:
+        bad = df[is_missing.any(axis=1)]
+        raise ValueError(
+            f"{len(bad)} rows have missing values in {columns}, {_first_row(bad)}. "
+            "Fill them in the raw data source or re-download the snapshot."
+        )
+
+
+def _check_one_row_per_date_ticker(df: pd.DataFrame) -> None:
+    """Raise if a (date, ticker) appears more than once, e.g. two different prices for one day."""
+    repeated = df[df.duplicated([DATE_COLUMN, TICKER_COLUMN], keep=False)]
+    if not repeated.empty:
+        raise ValueError(
+            f"{len(repeated)} rows share a (date, ticker) with conflicting values, "
+            f"{_first_row(repeated)}. Keep one correct row per day in the raw data source."
+        )
+
+
 def _check_tickers_present(df: pd.DataFrame, tickers: list[str]) -> None:
     """Raise if any configured ticker has no rows."""
     present = set(df[TICKER_COLUMN])
     absent = [ticker for ticker in tickers if ticker not in present]
     if absent:
-        raise ValueError(f"Tickers {absent} not found in the data. Check config.yaml tickers or the raw price file.")
+        raise ValueError(
+            f"Tickers {absent} not found in the data. Check config.yaml tickers or the raw file."
+        )
 
 
 def _check_same_number_of_dates(df: pd.DataFrame) -> None:
@@ -88,17 +125,15 @@ def _check_value_ranges(df: pd.DataFrame) -> None:
     """Raise on impossible values: a price at or below zero, or negative volume."""
     bad_close = df[df[CLOSE_COLUMN] <= 0]
     if not bad_close.empty:
-        first = bad_close.iloc[0]
         raise ValueError(
-            f"{len(bad_close)} rows have close <= 0, first: {first[TICKER_COLUMN]} on "
-            f"{first[DATE_COLUMN]:%Y-%m-%d}. Prices must be positive; fix the raw data source."
+            f"{len(bad_close)} rows have close <= 0, {_first_row(bad_close)}. "
+            "Prices must be positive; fix the raw data source."
         )
     bad_volume = df[df[VOLUME_COLUMN] < 0]
     if not bad_volume.empty:
-        first = bad_volume.iloc[0]
         raise ValueError(
-            f"{len(bad_volume)} rows have volume < 0, first: {first[TICKER_COLUMN]} on "
-            f"{first[DATE_COLUMN]:%Y-%m-%d}. Volume cannot be negative; fix the raw data source."
+            f"{len(bad_volume)} rows have volume < 0, {_first_row(bad_volume)}. "
+            "Volume cannot be negative; fix the raw data source."
         )
 
 
@@ -108,9 +143,9 @@ def _check_daily_returns(df: pd.DataFrame, max_abs_daily_return: float) -> None:
     moves = ordered.groupby(TICKER_COLUMN)[CLOSE_COLUMN].pct_change().abs()
     too_big = ordered[moves > max_abs_daily_return]
     if not too_big.empty:
-        first = too_big.iloc[0]
+        biggest = moves[too_big.index[0]]
         raise ValueError(
-            f"{len(too_big)} daily returns above {max_abs_daily_return:.0%}, first: {first[TICKER_COLUMN]} on "
-            f"{first[DATE_COLUMN]:%Y-%m-%d} ({moves[first.name]:.1%}). "
+            f"{len(too_big)} daily returns above {max_abs_daily_return:.0%}, "
+            f"{_first_row(too_big)} ({biggest:.1%}). "
             "Check for a bad price or a missing split adjustment."
         )

@@ -21,7 +21,9 @@ def make_valid_long() -> pd.DataFrame:
     )
 
 
-def run_gate(df: pd.DataFrame, tickers: list[str] | None = None, max_move: float | None = 0.25) -> bool:
+def run_gate(
+    df: pd.DataFrame, tickers: list[str] | None = None, max_move: float | None = 0.25
+) -> bool:
     """Call the gate with the settings main.py will pass (config: max_abs_daily_return 0.25)."""
     return validate.validate_dataframe(
         df, required_columns=REQUIRED, tickers=TICKERS if tickers is None else tickers,
@@ -35,7 +37,7 @@ def test_unit_validate_returns_true_for_valid_data():
 
 
 def test_unit_validate_skips_optional_checks_when_none():
-    """With tickers and max_abs_daily_return left as None, those two checks are skipped: a 30% jump passes."""
+    """tickers and max_abs_daily_return left as None skip those checks: a 30% jump passes."""
     df = make_valid_long()
     df.loc[1, "close"] = 130.0
     assert validate.validate_dataframe(df, required_columns=REQUIRED) is True
@@ -51,6 +53,24 @@ def test_unit_validate_raises_on_empty_frame():
     """Right columns but zero rows is not usable data."""
     with pytest.raises(ValueError, match="empty"):
         run_gate(make_valid_long().iloc[0:0])
+
+
+@pytest.mark.parametrize("column", ["close", "volume"])
+def test_unit_validate_raises_on_missing_value(column):
+    """An empty (NaN) close or volume must stop the gate, not be dropped quietly by to_wide."""
+    df = make_valid_long()
+    df[column] = df[column].astype(float)
+    df.loc[3, column] = float("nan")
+    with pytest.raises(ValueError, match=f"missing values in \\['{column}'\\].*EFA on 2024-01-02"):
+        run_gate(df)
+
+
+def test_unit_validate_raises_on_conflicting_date_ticker_rows():
+    """Two different SPY prices for 2024-01-02 (cleaning keeps both): the gate must reject them."""
+    df = make_valid_long()
+    conflict = df.iloc[[0]].assign(close=999.0)
+    with pytest.raises(ValueError, match="share a \\(date, ticker\\).*SPY on 2024-01-02"):
+        run_gate(pd.concat([df, conflict], ignore_index=True))
 
 
 def test_unit_validate_raises_on_absent_ticker():
