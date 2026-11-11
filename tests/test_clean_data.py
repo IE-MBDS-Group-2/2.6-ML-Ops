@@ -121,3 +121,8 @@ def test_unit_clean_dataframe_works_without_date_and_ticker_columns():
     clean = clean_data.clean_dataframe(raw)
     assert list(clean.columns) == ["feature_one", "label"]
     assert list(raw.columns) == [" Feature One ", "Label"]
+
+
+def test_unit_clean_dataframe_raises_type_error_on_non_dataframe():
+    with pytest.raises(TypeError, match="expects a pandas DataFrame"):
+        clean_data.clean_dataframe([{"date": "2024-01-02"}])

@@ -26,7 +26,8 @@ import pandas as pd
 import yaml
 from sklearn.model_selection import train_test_split
 
-from src import clean_data, evaluate, features, infer, load_data, portfolio, train, utils, validate
+from src import (clean_data, evaluate, features, infer, load_data, portfolio,
+                 train, utils, validate)
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ REQUIRED_SECTIONS = (
     "paths", "data", "portfolio", "problem", "split", "features",
     "model", "quality_gate", "fallback", "costs", "logging",
 )
-NOT_FEATURES = ("rule_action", "best_action")
+RULE_ACTION_COLUMN = "rule_action"  # made by portfolio.build_decision_table; never a model input
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 
 
@@ -185,7 +186,7 @@ def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
     labelled = table.dropna(subset=[target_column])
     train_rows, val_rows, _sealed_test = _split_by_date(
         labelled, cfg["split"]["train_end"], cfg["split"]["val_end"])
-    columns = [name for name in table.columns if name not in NOT_FEATURES]
+    columns = [name for name in table.columns if name not in (RULE_ACTION_COLUMN, target_column)]
     model = train.train_model(
         train_rows[columns], train_rows[target_column],
         features.get_feature_preprocessor(columns), cfg["problem"]["problem_type"],

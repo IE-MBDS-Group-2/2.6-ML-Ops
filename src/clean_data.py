@@ -35,9 +35,13 @@ def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> p
              ticker, exact duplicate rows removed, and a fresh 0..n-1 index. Rows that share a
              (date, ticker) but differ in a value are KEPT: choosing one would be a silent fix, so
              validate.py rejects them instead.
+    Raises:  TypeError if df_raw is not a DataFrame; ValueError if target_column is given but absent.
     Why:     later steps rely on consistent names, real dates and a stable order; exact duplicates
              would double-count a day.
     """
+    if not isinstance(df_raw, pd.DataFrame):
+        raise TypeError(f"clean_dataframe expects a pandas DataFrame, got {type(df_raw).__name__}. "
+                        "Pass the output of load_raw_data.")
     df = df_raw.copy()
     df.columns = [str(column).strip().lower().replace(" ", "_") for column in df.columns]
     if DATE_COLUMN in df.columns:

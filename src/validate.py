@@ -42,10 +42,13 @@ def validate_dataframe(
              max_abs_daily_return, largest believable one-day move, e.g. 0.25 (None skips it).
     Outputs: True when every check passes.
     Why:     catching bad data here is cheap; finding it after training is not.
-    Raises:  ValueError naming the problem and how to fix it, for: missing columns, empty
-             table, missing close or volume values, conflicting (date, ticker) rows, absent
-             ticker, a ticker with fewer dates, close <= 0, volume < 0, an extreme daily return.
+    Raises:  TypeError if df is not a DataFrame. ValueError naming the problem and how to fix it, for:
+             missing columns, empty table, empty values in a required column, and, for a price table (date
+             and ticker columns), conflicting (date, ticker) rows, absent ticker, a ticker with fewer dates,
+             close <= 0, volume < 0, an extreme daily return.
     """
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError(f"validate_dataframe expects a pandas DataFrame, got {type(df).__name__}.")
     missing = [column for column in required_columns if column not in df.columns]
     if missing:
         raise ValueError(
@@ -53,22 +56,28 @@ def validate_dataframe(
         )
     if df.empty:
         raise ValueError(
-            "The price table is empty. Check that the raw file has rows and was loaded correctly."
+            "The table is empty. Check that the raw file has rows and was loaded correctly."
         )
 
     if target_column is not None:
         _check_target(df, target_column)
-    _check_no_missing_values(df)
+    _check_no_missing_values(df, required_columns)
+    if {DATE_COLUMN, TICKER_COLUMN} <= set(df.columns):
+        _check_price_table(df, tickers, max_abs_daily_return)
+    logger.info("Validated %d rows and %d columns", len(df), df.shape[1])
+    return True
+
+
+def _check_price_table(df: pd.DataFrame, tickers: list[str] | None, max_abs_daily_return: float | None) -> None:
+    """Price-table rules, run only when the table has date and ticker columns (one row per date and ticker)."""
     _check_one_row_per_date_ticker(df)
     if tickers is not None:
         _check_tickers_present(df, tickers)
     _check_same_number_of_dates(df)
-    _check_value_ranges(df)
-    if max_abs_daily_return is not None:
-        _check_daily_returns(df, max_abs_daily_return)
-
-    logger.info("Validated %d rows for %d tickers", len(df), df[TICKER_COLUMN].nunique())
-    return True
+    if {CLOSE_COLUMN, VOLUME_COLUMN} <= set(df.columns):
+        _check_value_ranges(df)
+        if max_abs_daily_return is not None:
+            _check_daily_returns(df, max_abs_daily_return)
 
 
 def _check_target(df: pd.DataFrame, target_column: str) -> None:
@@ -84,13 +93,15 @@ def _check_target(df: pd.DataFrame, target_column: str) -> None:
 def _first_row(rows: pd.DataFrame) -> str:
     """Describe the first offending row, e.g. 'first: SPY on 2024-01-03', so it can be found."""
     first = rows.iloc[0]
-    return f"first: {first[TICKER_COLUMN]} on {first[DATE_COLUMN]:%Y-%m-%d}"
+    if {DATE_COLUMN, TICKER_COLUMN} <= set(rows.columns):
+        return f"first: {first[TICKER_COLUMN]} on {pd.Timestamp(first[DATE_COLUMN]):%Y-%m-%d}"
+    return f"first: row {rows.index[0]}"
 
 
-def _check_no_missing_values(df: pd.DataFrame) -> None:
-    """Raise if close or volume has an empty (NaN) value; to_wide would otherwise drop the date."""
-    is_missing = df[[CLOSE_COLUMN, VOLUME_COLUMN]].isna()
-    columns = [column for column in (CLOSE_COLUMN, VOLUME_COLUMN) if is_missing[column].any()]
+def _check_no_missing_values(df: pd.DataFrame, required_columns: list[str]) -> None:
+    """Raise if a required column has an empty (NaN) value; for prices, to_wide would otherwise drop the date."""
+    is_missing = df[list(required_columns)].isna()
+    columns = [column for column in required_columns if is_missing[column].any()]
     if columns:
         bad = df[is_missing.any(axis=1)]
         raise ValueError(

@@ -136,3 +136,32 @@ def test_unit_validate_accepts_complete_target():
     """A present, complete target passes."""
     df = make_valid_long().assign(best_action=1.0)
     assert validate.validate_dataframe(df, REQUIRED, target_column="best_action") is True
+
+
+def make_generic_table() -> pd.DataFrame:
+    """A non-price table (no date or ticker columns), as the contract probes use."""
+    return pd.DataFrame({"tenure": [1.0, 5.0, 9.0], "charges": [20.0, 35.5, 50.0], "churn": [0, 1, 0]})
+
+
+def test_unit_validate_accepts_a_generic_table_without_price_columns():
+    table = make_generic_table()
+    assert validate.validate_dataframe(table, required_columns=["tenure", "charges"], target_column="churn")
+
+
+def test_unit_validate_raises_on_missing_value_in_a_generic_table():
+    table = make_generic_table()
+    table.loc[1, "charges"] = None
+    with pytest.raises(ValueError, match=r"missing values in \['charges'\], first: row 1"):
+        validate.validate_dataframe(table, required_columns=["tenure", "charges"])
+
+
+def test_unit_validate_runs_date_ticker_rules_without_close_and_volume():
+    table = make_valid_long()[["date", "ticker"]]
+    assert validate.validate_dataframe(table, required_columns=["date", "ticker"], max_abs_daily_return=0.25)
+    with pytest.raises(ValueError, match="share a \\(date, ticker\\)"):
+        validate.validate_dataframe(pd.concat([table, table.iloc[[0]]]), required_columns=["date", "ticker"])
+
+
+def test_unit_validate_raises_type_error_on_non_dataframe():
+    with pytest.raises(TypeError, match="expects a pandas DataFrame"):
+        validate.validate_dataframe([1, 2, 3], required_columns=[])
