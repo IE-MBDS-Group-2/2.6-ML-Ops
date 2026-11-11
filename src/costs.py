@@ -51,7 +51,8 @@ def average_daily_dollar_volume(
     return (close * volume).rolling(window, min_periods=window).mean()
 
 
-def sqrt_impact_bps(trade_value, adv, impact_factor: float):
+def sqrt_impact_bps(trade_value: pd.Series | np.ndarray, adv: pd.Series | np.ndarray | None,
+                    impact_factor: float) -> np.ndarray:
     """Square-root market impact in bps: impact_factor x sqrt(trade_value / adv x 100).
 
     Zero where adv is missing, NaN or non-positive, or where nothing is traded.
@@ -63,7 +64,7 @@ def sqrt_impact_bps(trade_value, adv, impact_factor: float):
     return impact_factor * np.sqrt(pct_adv)
 
 
-def commission(trade_value, rate: float, min_fee: float, cap: float):
+def commission(trade_value: pd.Series | np.ndarray, rate: float, min_fee: float, cap: float) -> np.ndarray:
     """Commission in currency units per trade: rate x value, floored then capped."""
     trade_value = np.asarray(trade_value, dtype=float)
     fee = np.maximum(rate * trade_value, min_fee)
@@ -71,14 +72,17 @@ def commission(trade_value, rate: float, min_fee: float, cap: float):
     return np.where(trade_value > 0, fee, 0.0)
 
 
-def slippage_bps(delta_w, trade_value, adv, entry_bps: float, exit_bps: float, impact_factor: float):
+def slippage_bps(delta_w: pd.Series | np.ndarray, trade_value: pd.Series | np.ndarray,
+                 adv: pd.Series | np.ndarray | None, entry_bps: float, exit_bps: float,
+                 impact_factor: float) -> np.ndarray:
     """Adverse slippage in bps per ETF: base (entry for buys, exit for sells) + impact."""
     delta_w = np.asarray(delta_w, dtype=float)
     base = np.where(delta_w < 0, exit_bps, entry_bps)
     return base + sqrt_impact_bps(trade_value, adv, impact_factor)
 
 
-def trade_costs(delta_w, aum: float, adv=None, cfg: dict | None = None):
+def trade_costs(delta_w: pd.Series, aum: float, adv: pd.Series | None = None,
+                cfg: dict | None = None) -> pd.Series:
     """Cost of one rebalance as a fraction of portfolio value, per ETF.
 
     Args:

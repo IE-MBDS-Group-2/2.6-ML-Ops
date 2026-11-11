@@ -117,3 +117,17 @@ def test_unit_train_model_regression_fits_ridge_and_predicts_floats():
     predictions = model.predict(X)
     assert len(predictions) == len(X)
     assert predictions.dtype.kind == "f"
+
+
+def test_unit_train_model_leaves_the_callers_preprocessor_unfitted():
+    X, y = make_data()
+    preprocessor = make_preprocessor()
+    model = train.train_model(X, y, preprocessor, "classification", MODEL_PARAMS)
+    check_is_fitted(model)
+    assert not hasattr(preprocessor, "transformers_")
+
+
+def test_unit_train_model_accepts_passthrough_as_the_preprocessor():
+    X, y = make_data()
+    model = train.train_model(X, y, "passthrough", "classification", MODEL_PARAMS)
+    assert len(model.predict(X)) == len(X)

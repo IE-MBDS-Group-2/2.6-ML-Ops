@@ -20,13 +20,16 @@ Tests     tests/test_main.py
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
 import yaml
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
 
-from src import clean_data, evaluate, features, infer, load_data, portfolio, train, utils, validate
+from src import (clean_data, evaluate, features, infer, load_data, portfolio,
+                 train, utils, validate)
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +39,6 @@ REQUIRED_SECTIONS = (
     "paths", "data", "portfolio", "problem", "split", "features",
     "model", "quality_gate", "fallback", "costs", "logging",
 )
-NOT_FEATURES = ("rule_action", "best_action")
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 
 
@@ -147,10 +149,13 @@ def _load_prices(path: Path, cfg: dict) -> pd.DataFrame:
     Why:     training and inference data go through the same three steps, so they cannot differ.
     Raises:  FileNotFoundError, ValueError (from load_data and validate).
     """
-    clean = clean_data.clean_dataframe(load_data.load_raw_data(path))
+    cols = cfg["data"]["columns"]
+    clean = clean_data.clean_dataframe(
+        load_data.load_raw_data(path), date_column=cols["date_column"],
+        sort_by=[cols["date_column"], cols["ticker_column"]])
     validate.validate_dataframe(
         clean, cfg["data"]["required_columns"], tickers=cfg["data"]["tickers"],
-        max_abs_daily_return=cfg["data"]["max_abs_daily_return"],
+        max_abs_daily_return=cfg["data"]["max_abs_daily_return"], price_columns=cols,
     )
     return clean
 
@@ -161,9 +166,10 @@ def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
     Inputs:  clean, the validated long table; cfg, the full config (reads data and features).
     Outputs: (close_wide, volume_wide, market_features), all date x column and on one calendar.
     """
-    tickers = cfg["data"]["tickers"]
-    close_wide = clean_data.to_wide(clean, "close", tickers)
-    volume_wide = clean_data.to_wide(clean, "volume", tickers).reindex(close_wide.index)
+    tickers, cols = cfg["data"]["tickers"], cfg["data"]["columns"]
+    close_wide = clean_data.to_wide(clean, cols["close_column"], tickers, cols["date_column"], cols["ticker_column"])
+    volume_wide = clean_data.to_wide(
+        clean, cols["volume_column"], tickers, cols["date_column"], cols["ticker_column"]).reindex(close_wide.index)
     market = features.compute_market_features(
         close_wide, cfg["features"]["return_weeks"], cfg["features"]["vol_days"])
     return close_wide, volume_wide, market
@@ -185,7 +191,7 @@ def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
     labelled = table.dropna(subset=[target_column])
     train_rows, val_rows, _sealed_test = _split_by_date(
         labelled, cfg["split"]["train_end"], cfg["split"]["val_end"])
-    columns = [name for name in table.columns if name not in NOT_FEATURES]
+    columns = [name for name in table.columns if name not in (portfolio.RULE_ACTION_COLUMN, target_column)]
     model = train.train_model(
         train_rows[columns], train_rows[target_column],
         features.get_feature_preprocessor(columns), cfg["problem"]["problem_type"],
@@ -196,14 +202,15 @@ def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
     return model, columns, val_rows, scores
 
 
-def _model_policy(model, columns: list[str]):
+def _model_policy(model: Pipeline, columns: list[str]) -> Callable[[pd.Series], float]:
     """Wrap the fitted model as a policy: a function from a state row to an action."""
     def policy(state_row: pd.Series) -> float:
+        """The model's action for one decision date."""
         return float(model.predict(state_row[columns].to_frame().T.astype(float))[0])
     return policy
 
 
-def _validation_paths(model, columns: list[str], market_data: tuple, cfg: dict) -> tuple:
+def _validation_paths(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict) -> tuple:
     """Run the model and today's rule over the validation years through the same simulate.
 
     Inputs:  model and its feature columns; market_data (close_wide, volume_wide, market);
@@ -259,7 +266,7 @@ def _validation_metrics(scores: dict, daily_frames: tuple, cfg: dict) -> dict:
     }
 
 
-def _recommendations(model, columns: list[str], cfg: dict) -> pd.DataFrame:
+def _recommendations(model: Pipeline, columns: list[str], cfg: dict) -> pd.DataFrame:
     """Recommend an action for every decision date in the inference file.
 
     Inputs:  the fitted model and its feature columns; cfg, the full config.
@@ -280,7 +287,7 @@ def _recommendations(model, columns: list[str], cfg: dict) -> pd.DataFrame:
     inputs = table[columns]
     predictions = infer.run_inference(model, inputs, include_proba=True)
     return infer.apply_fallback(
-        predictions, table["rule_action"], inputs.isna().any(axis=1),
+        predictions, table[portfolio.RULE_ACTION_COLUMN], inputs.isna().any(axis=1),
         cfg["fallback"]["min_probability"])
 
 

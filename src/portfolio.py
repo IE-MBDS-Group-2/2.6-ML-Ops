@@ -24,6 +24,7 @@ Tests     tests/test_portfolio.py
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -31,6 +32,7 @@ import pandas as pd
 from src import costs
 
 logger = logging.getLogger(__name__)
+RULE_ACTION_COLUMN = "rule_action"  # today's rule in the decision table; never a model input
 
 _SUM_TOLERANCE = 1e-9    # target weights must sum to 1 within this
 _TIE_TOLERANCE = 1e-12   # rewards closer than this count as a tie (the smaller action wins)
@@ -40,7 +42,7 @@ def decision_dates(trading_days: pd.DatetimeIndex, start: str, end: str) -> pd.D
     """Pick the last trading day of each calendar week inside [start, end].
 
     Inputs:  trading_days, the common calendar (index of close_wide); start and end as YYYY-MM-DD, inclusive.
-    Outputs: a DatetimeIndex named decision_date, one date per week (a Thursday when Friday is a holiday).
+    Outputs: a DatetimeIndex, one date per week (a Thursday when Friday is a holiday).
     Why:     the portfolio manager decides once a week, after the last close of the week.
     Raises:  ValueError if no trading day falls inside [start, end].
     """
@@ -49,7 +51,7 @@ def decision_dates(trading_days: pd.DatetimeIndex, start: str, end: str) -> pd.D
     if in_range.empty:
         raise ValueError(f"No trading days between {start} and {end}. Check the dates in config.yaml.")
     last_per_week = pd.Series(in_range, index=in_range).groupby(in_range.to_period("W-SUN")).max()
-    result = pd.DatetimeIndex(last_per_week.to_numpy(), name="decision_date")
+    result = pd.DatetimeIndex(last_per_week.to_numpy())
     logger.info("Found %d decision dates from %s to %s", len(result), result[0].date(), result[-1].date())
     return result
 
@@ -84,8 +86,8 @@ def current_rule_action(weights: pd.Series, target: pd.Series, date: pd.Timestam
     return 1.0 if fires else 0.0
 
 
-def rebalance_cost(weights: pd.Series, target: pd.Series, action: float, aum: float, adv,
-                   cost_cfg: dict) -> float:
+def rebalance_cost(weights: pd.Series, target: pd.Series, action: float, aum: float,
+                   adv: pd.Series | None, cost_cfg: dict) -> float:
     """Total cost of applying `action`, as a fraction of portfolio value.
 
     Inputs:  weights and target per ticker; action in [0, 1]; aum, capital in the model portfolio;
@@ -109,7 +111,7 @@ def execution_schedule(trading_days: pd.DatetimeIndex, decisions: pd.DatetimeInd
     Raises:  ValueError if a decision date is not in trading_days.
     """
     days = pd.DatetimeIndex(trading_days)
-    decisions = pd.DatetimeIndex(decisions, name="decision_date")
+    decisions = pd.DatetimeIndex(decisions)
     positions = days.get_indexer(decisions)
     if (positions < 0).any():
         missing = [str(day.date()) for day in decisions[positions < 0]]
@@ -126,7 +128,8 @@ def execution_schedule(trading_days: pd.DatetimeIndex, decisions: pd.DatetimeInd
     )
 
 
-def make_current_rule_policy(target: pd.Series, decisions: pd.DatetimeIndex, cfg: dict):
+def make_current_rule_policy(target: pd.Series, decisions: pd.DatetimeIndex,
+                             cfg: dict) -> Callable[[pd.Series], float]:
     """Wrap today's rule as a policy: a function from a state row to an action.
 
     Inputs:  target weights; decisions, the decision dates of the run (to find each quarter's first one);
@@ -143,6 +146,7 @@ def make_current_rule_policy(target: pd.Series, decisions: pd.DatetimeIndex, cfg
     tickers = list(target.index)
 
     def policy(state_row: pd.Series) -> float:
+        """Today's rule for one decision date: 1.0 on a quarter start or a breached band, else 0.0."""
         weights = pd.Series([state_row[f"w_{ticker}"] for ticker in tickers], index=tickers)
         date = pd.Timestamp(state_row.name)
         return current_rule_action(weights, target, date, date in quarter_starts, rule["drift_band"])
@@ -161,6 +165,14 @@ def _check_target(close_wide: pd.DataFrame, target: pd.Series) -> list[str]:
     return list(close_wide.columns)
 
 
+def _problem_column(cfg: dict, key: str) -> str:
+    """Read problem.<key> (a column name) from the config; a clear error beats a bare KeyError."""
+    name = cfg.get("problem", {}).get(key)
+    if not name:
+        raise ValueError(f"Config has no problem.{key}. Add it to the problem section of config.yaml.")
+    return name
+
+
 def _prepare_run(prices: tuple[pd.DataFrame, pd.DataFrame], market_features: pd.DataFrame, target: pd.Series,
                  period: tuple[str, str], cfg: dict) -> dict:
     """Everything simulate needs before the daily loop: calendar, schedule, returns, ADV, market rows."""
@@ -175,6 +187,7 @@ def _prepare_run(prices: tuple[pd.DataFrame, pd.DataFrame], market_features: pd.
         "target": target.reindex(tickers),
         "days": days,
         "decisions": decisions,
+        "id_column": _problem_column(cfg, "id_column"),
         "to_execute": {executed: decided for decided, executed in schedule["execution_date"].dropna().items()},
         "returns": close_wide[tickers].pct_change(fill_method=None).reindex(days),
         "adv": costs.average_daily_dollar_volume(close_wide[tickers], volume_wide[tickers], window),
@@ -211,7 +224,8 @@ def _state_row(day: pd.Timestamp, book: dict, run: dict, cfg: dict) -> pd.Series
     return pd.Series(row, dtype=float, name=day)
 
 
-def _decide(day: pd.Timestamp, book: dict, run: dict, policy, cfg: dict) -> pd.Series:
+def _decide(day: pd.Timestamp, book: dict, run: dict, policy: Callable[[pd.Series], float],
+            cfg: dict) -> pd.Series:
     """Build the state row, ask the policy, remember the action for the execution day."""
     book["weeks"] += 1
     state = _state_row(day, book, run, cfg)
@@ -224,7 +238,8 @@ def _decide(day: pd.Timestamp, book: dict, run: dict, policy, cfg: dict) -> pd.S
 
 
 def simulate(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_features: pd.DataFrame,
-             target: pd.Series, policy, start: str, end: str, cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+             target: pd.Series, policy: Callable[[pd.Series], float], start: str, end: str,
+             cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run any policy through the README timing rule and trading costs.
 
     Inputs:  close_wide, volume_wide (date x ticker); market_features (date x feature, may have no columns);
@@ -257,8 +272,8 @@ def simulate(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_feature
 
 def _finish(run: dict, daily_rows: list[dict], decision_rows: list[pd.Series]) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Turn the loop's rows into the daily and decision frames, and log a one-line summary."""
-    daily = pd.DataFrame(daily_rows, index=pd.DatetimeIndex(run["days"], name="date"))
-    decisions = pd.DataFrame(decision_rows).rename_axis("decision_date")
+    daily = pd.DataFrame(daily_rows, index=pd.DatetimeIndex(run["days"]))
+    decisions = pd.DataFrame(decision_rows).rename_axis(run["id_column"])
     logger.info("Simulated %d days and %d decisions: final value %.4f, total cost %.6f",
                 len(daily), len(decisions), daily["value"].iloc[-1], daily["cost_paid"].sum())
     return daily, decisions
@@ -313,7 +328,7 @@ def _labels(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFra
                                             cfg["costs"]["slippage"]["adv_window"])
     peaks = daily["value"].cummax()
     weight_columns = [f"w_{ticker}" for ticker in target.index]
-    labels = pd.Series(np.nan, index=decisions.index, name="best_action")
+    labels = pd.Series(np.nan, index=decisions.index, name=_problem_column(cfg, "target_column"))
     for decided, when in execution_schedule(daily.index, decisions.index).dropna().iterrows():
         state = {"weights": decisions.loc[decided, weight_columns].set_axis(target.index).astype(float),
                  "value": daily.at[decided, "value"], "peak": peaks.at[decided], "adv": adv.loc[decided]}
@@ -339,8 +354,9 @@ def build_decision_table(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, ma
     policy = make_current_rule_policy(target, decision_dates(days, start, end), cfg)
     daily, decisions = simulate(close_wide, volume_wide, market_features, target, policy, start, end, cfg)
     target = target.reindex(close_wide.columns)
-    table = decisions.rename(columns={"action": "rule_action"})
-    table["best_action"] = _labels(daily, decisions, close_wide, volume_wide, target, cfg)
+    target_column = _problem_column(cfg, "target_column")
+    table = decisions.rename(columns={"action": RULE_ACTION_COLUMN})
+    table[target_column] = _labels(daily, decisions, close_wide, volume_wide, target, cfg)
     logger.info("Decision table: %d rows, label counts %s", len(table),
-                table["best_action"].value_counts().sort_index().to_dict())
+                table[target_column].value_counts().sort_index().to_dict())
     return table

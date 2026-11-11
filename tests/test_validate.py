@@ -6,6 +6,8 @@ import pytest
 from src import clean_data, validate
 
 REQUIRED = ["date", "ticker", "close", "volume"]
+COLUMNS = {"date_column": "date", "ticker_column": "ticker", "close_column": "close",
+           "volume_column": "volume"}  # config data.columns
 TICKERS = ["SPY", "EFA"]
 
 
@@ -27,7 +29,7 @@ def run_gate(
     """Call the gate with the settings main.py will pass (config: max_abs_daily_return 0.25)."""
     return validate.validate_dataframe(
         df, required_columns=REQUIRED, tickers=TICKERS if tickers is None else tickers,
-        max_abs_daily_return=max_move,
+        max_abs_daily_return=max_move, price_columns=COLUMNS,
     )
 
 
@@ -41,6 +43,7 @@ def test_unit_validate_skips_optional_checks_when_none():
     df = make_valid_long()
     df.loc[1, "close"] = 130.0
     assert validate.validate_dataframe(df, required_columns=REQUIRED) is True
+    assert validate.validate_dataframe(df, required_columns=REQUIRED, price_columns=COLUMNS) is True
 
 
 def test_unit_validate_raises_on_missing_required_column():
@@ -115,7 +118,7 @@ def test_integration_clean_output_passes_validate():
     """clean_dataframe output on messy raw data is accepted by the gate."""
     raw = make_valid_long().rename(columns=str.upper)
     raw["DATE"] = raw["DATE"].dt.strftime("%Y-%m-%d")
-    assert run_gate(clean_data.clean_dataframe(raw)) is True
+    assert run_gate(clean_data.clean_dataframe(raw, date_column="date", sort_by=["date", "ticker"])) is True
 
 
 def test_unit_validate_raises_on_missing_target_column():
@@ -136,3 +139,62 @@ def test_unit_validate_accepts_complete_target():
     """A present, complete target passes."""
     df = make_valid_long().assign(best_action=1.0)
     assert validate.validate_dataframe(df, REQUIRED, target_column="best_action") is True
+
+
+def make_generic_table() -> pd.DataFrame:
+    """A non-price table (no date or ticker columns), as the contract probes use."""
+    return pd.DataFrame({"tenure": [1.0, 5.0, 9.0], "charges": [20.0, 35.5, 50.0], "churn": [0, 1, 0]})
+
+
+def test_unit_validate_accepts_a_generic_table_without_price_columns():
+    table = make_generic_table()
+    assert validate.validate_dataframe(table, required_columns=["tenure", "charges"], target_column="churn")
+
+
+def test_unit_validate_raises_on_missing_value_in_a_generic_table():
+    table = make_generic_table()
+    table.loc[1, "charges"] = None
+    with pytest.raises(ValueError, match=r"missing values in \['charges'\], first: row 1"):
+        validate.validate_dataframe(table, required_columns=["tenure", "charges"])
+
+
+def test_unit_validate_skips_price_rules_without_price_columns():
+    # Without data.columns the gate checks only the generic rules, so a repeated (date, ticker) row passes.
+    table = make_valid_long()
+    assert validate.validate_dataframe(pd.concat([table, table.iloc[[0]]]), required_columns=REQUIRED)
+
+
+def test_unit_validate_raises_when_a_configured_price_column_is_missing():
+    with pytest.raises(ValueError, match=r"Price columns \['volume'\] are missing"):
+        validate.validate_dataframe(make_valid_long().drop(columns="volume"), required_columns=["date"],
+                                    price_columns=COLUMNS)
+
+
+def test_unit_validate_uses_the_configured_column_names():
+    old_to_new = {"date": "day", "ticker": "symbol", "close": "px", "volume": "qty"}
+    renamed = {f"{old}_column": new for old, new in old_to_new.items()}
+    table = make_valid_long().rename(columns=old_to_new)
+    assert validate.validate_dataframe(table, list(renamed.values()), tickers=TICKERS, max_abs_daily_return=0.25,
+                                       price_columns=renamed)
+    table.loc[0, "px"] = -1.0
+    with pytest.raises(ValueError, match="close <= 0, first: SPY on 2024-01-02"):
+        validate.validate_dataframe(table, list(renamed.values()), price_columns=renamed)
+
+
+def test_unit_validate_raises_type_error_on_non_dataframe():
+    with pytest.raises(TypeError, match="expects a pandas DataFrame"):
+        validate.validate_dataframe([1, 2, 3], required_columns=[])
+
+
+@pytest.mark.parametrize("extra", [{"tickers": TICKERS}, {"max_abs_daily_return": 0.25}])
+def test_unit_validate_raises_when_a_price_rule_is_asked_for_without_price_columns(extra):
+    # A rule that cannot run must stop the caller, not pass silently.
+    with pytest.raises(ValueError, match="need price_columns"):
+        validate.validate_dataframe(make_valid_long(), required_columns=REQUIRED, **extra)
+
+
+def test_unit_validate_reports_a_missing_price_column_before_any_row_message():
+    table = make_valid_long().drop(columns="ticker")
+    table.loc[0, "close"] = None
+    with pytest.raises(ValueError, match=r"Price columns \['ticker'\] are missing"):
+        validate.validate_dataframe(table, required_columns=["close"], price_columns=COLUMNS)

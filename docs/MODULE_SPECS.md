@@ -79,9 +79,13 @@ from `config.yaml`. It writes `data/raw/prices.csv` and `data/inference/prices_l
 ## clean_data.py (Tate)
 
 ```python
-def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> pd.DataFrame   # contract
-def to_wide(df: pd.DataFrame, value_column: str, tickers: list[str]) -> pd.DataFrame          # ours
+def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None, date_column: str | None = None,
+                    sort_by: list[str] | None = None) -> pd.DataFrame                         # contract + extras
+def to_wide(df: pd.DataFrame, value_column: str, tickers: list[str], date_column: str,
+            ticker_column: str) -> pd.DataFrame                                               # ours
 ```
+
+Column names are arguments, never literals: `main.py` passes them from `data.columns` in `config.yaml`.
 
 - `clean_dataframe`: lowercase column names; parse `date`; sort by `date, ticker`; drop duplicate `(date, ticker)`
   rows (log how many). Never modifies the input. `target_column` is unused here (the raw file has no target); keep
@@ -99,8 +103,13 @@ Tests:
 
 ```python
 def validate_dataframe(df: pd.DataFrame, required_columns: list[str], target_column: str | None = None,
-                       tickers: list[str] | None = None, max_abs_daily_return: float | None = None) -> bool  # contract + extras
+                       tickers: list[str] | None = None, max_abs_daily_return: float | None = None,
+                       price_columns: dict[str, str] | None = None) -> bool                  # contract + extras
 ```
+
+`price_columns` is `data.columns` from the config. The price-table rules below run only when it is given; without
+it only the general rules run (required columns, empty frame, empty values, target). Passing `tickers` or
+`max_abs_daily_return` without `price_columns` raises a `ValueError`, so a rule is never skipped silently.
 
 Returns `True` or raises `ValueError` with a clear message. It never fixes data. It stops on:
 - missing required columns, or an empty frame;

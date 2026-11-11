@@ -23,6 +23,7 @@ def make_cfg() -> dict:
             "reward": {"penalty_lambda": 1.0},
         },
         "costs": {"aum": AUM, "model": "flat", "flat": {"rate": 0.001}, "slippage": {"adv_window": 20}},
+        "problem": {"target_column": "best_action", "id_column": "decision_date"},
     }
 
 
@@ -252,3 +253,13 @@ def test_integration_market_features_then_decision_table():
     assert set(table["best_action"].iloc[:-2]) <= {0.0, 0.5, 1.0}
     assert table["best_action"].iloc[-2:].isna().all()
     assert set(market.columns) <= set(table.columns)
+
+
+@pytest.mark.parametrize("key", ["id_column", "target_column"])
+def test_unit_build_decision_table_raises_clear_error_when_a_problem_column_is_not_configured(key):
+    close, volume = make_prices()
+    cfg = make_cfg()
+    del cfg["problem"][key]
+    with pytest.raises(ValueError, match=f"Config has no problem.{key}"):
+        portfolio.build_decision_table(close, volume, pd.DataFrame(index=close.index), TARGET,
+                                       "2024-01-01", "2024-03-22", cfg)
