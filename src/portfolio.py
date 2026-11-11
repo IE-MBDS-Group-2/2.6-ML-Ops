@@ -31,6 +31,7 @@ import pandas as pd
 from src import costs
 
 logger = logging.getLogger(__name__)
+RULE_ACTION_COLUMN = "rule_action"  # today's rule in the decision table; never a model input
 
 _SUM_TOLERANCE = 1e-9    # target weights must sum to 1 within this
 _TIE_TOLERANCE = 1e-12   # rewards closer than this count as a tie (the smaller action wins)
@@ -40,7 +41,7 @@ def decision_dates(trading_days: pd.DatetimeIndex, start: str, end: str) -> pd.D
     """Pick the last trading day of each calendar week inside [start, end].
 
     Inputs:  trading_days, the common calendar (index of close_wide); start and end as YYYY-MM-DD, inclusive.
-    Outputs: a DatetimeIndex named decision_date, one date per week (a Thursday when Friday is a holiday).
+    Outputs: a DatetimeIndex, one date per week (a Thursday when Friday is a holiday).
     Why:     the portfolio manager decides once a week, after the last close of the week.
     Raises:  ValueError if no trading day falls inside [start, end].
     """
@@ -49,7 +50,7 @@ def decision_dates(trading_days: pd.DatetimeIndex, start: str, end: str) -> pd.D
     if in_range.empty:
         raise ValueError(f"No trading days between {start} and {end}. Check the dates in config.yaml.")
     last_per_week = pd.Series(in_range, index=in_range).groupby(in_range.to_period("W-SUN")).max()
-    result = pd.DatetimeIndex(last_per_week.to_numpy(), name="decision_date")
+    result = pd.DatetimeIndex(last_per_week.to_numpy())
     logger.info("Found %d decision dates from %s to %s", len(result), result[0].date(), result[-1].date())
     return result
 
@@ -109,7 +110,7 @@ def execution_schedule(trading_days: pd.DatetimeIndex, decisions: pd.DatetimeInd
     Raises:  ValueError if a decision date is not in trading_days.
     """
     days = pd.DatetimeIndex(trading_days)
-    decisions = pd.DatetimeIndex(decisions, name="decision_date")
+    decisions = pd.DatetimeIndex(decisions)
     positions = days.get_indexer(decisions)
     if (positions < 0).any():
         missing = [str(day.date()) for day in decisions[positions < 0]]
@@ -175,6 +176,7 @@ def _prepare_run(prices: tuple[pd.DataFrame, pd.DataFrame], market_features: pd.
         "target": target.reindex(tickers),
         "days": days,
         "decisions": decisions,
+        "id_column": cfg["problem"]["id_column"],
         "to_execute": {executed: decided for decided, executed in schedule["execution_date"].dropna().items()},
         "returns": close_wide[tickers].pct_change(fill_method=None).reindex(days),
         "adv": costs.average_daily_dollar_volume(close_wide[tickers], volume_wide[tickers], window),
@@ -257,8 +259,8 @@ def simulate(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_feature
 
 def _finish(run: dict, daily_rows: list[dict], decision_rows: list[pd.Series]) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Turn the loop's rows into the daily and decision frames, and log a one-line summary."""
-    daily = pd.DataFrame(daily_rows, index=pd.DatetimeIndex(run["days"], name="date"))
-    decisions = pd.DataFrame(decision_rows).rename_axis("decision_date")
+    daily = pd.DataFrame(daily_rows, index=pd.DatetimeIndex(run["days"]))
+    decisions = pd.DataFrame(decision_rows).rename_axis(run["id_column"])
     logger.info("Simulated %d days and %d decisions: final value %.4f, total cost %.6f",
                 len(daily), len(decisions), daily["value"].iloc[-1], daily["cost_paid"].sum())
     return daily, decisions
@@ -313,7 +315,7 @@ def _labels(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFra
                                             cfg["costs"]["slippage"]["adv_window"])
     peaks = daily["value"].cummax()
     weight_columns = [f"w_{ticker}" for ticker in target.index]
-    labels = pd.Series(np.nan, index=decisions.index, name="best_action")
+    labels = pd.Series(np.nan, index=decisions.index, name=cfg["problem"]["target_column"])
     for decided, when in execution_schedule(daily.index, decisions.index).dropna().iterrows():
         state = {"weights": decisions.loc[decided, weight_columns].set_axis(target.index).astype(float),
                  "value": daily.at[decided, "value"], "peak": peaks.at[decided], "adv": adv.loc[decided]}
@@ -339,8 +341,9 @@ def build_decision_table(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, ma
     policy = make_current_rule_policy(target, decision_dates(days, start, end), cfg)
     daily, decisions = simulate(close_wide, volume_wide, market_features, target, policy, start, end, cfg)
     target = target.reindex(close_wide.columns)
-    table = decisions.rename(columns={"action": "rule_action"})
-    table["best_action"] = _labels(daily, decisions, close_wide, volume_wide, target, cfg)
+    target_column = cfg["problem"]["target_column"]
+    table = decisions.rename(columns={"action": RULE_ACTION_COLUMN})
+    table[target_column] = _labels(daily, decisions, close_wide, volume_wide, target, cfg)
     logger.info("Decision table: %d rows, label counts %s", len(table),
-                table["best_action"].value_counts().sort_index().to_dict())
+                table[target_column].value_counts().sort_index().to_dict())
     return table

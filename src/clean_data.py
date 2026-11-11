@@ -22,26 +22,30 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-DATE_COLUMN = "date"
-TICKER_COLUMN = "ticker"
 
-
-def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> pd.DataFrame:
+def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None, date_column: str | None = None,
+                    sort_by: list[str] | None = None) -> pd.DataFrame:
     """Return a cleaned copy of the raw long price table.
 
     Inputs:  df_raw, one row per (date, ticker); target_column, given in training mode (rows with no target are
              dropped), None in inference mode (no rows dropped for a target). Prices have no target.
+             date_column, parsed to datetime if given; sort_by, columns to sort on if given (both from
+             config data.columns; None leaves the table as it is).
     Outputs: new DataFrame with lowercase column names, a datetime date column, sorted by date then
              ticker, exact duplicate rows removed, and a fresh 0..n-1 index. Rows that share a
              (date, ticker) but differ in a value are KEPT: choosing one would be a silent fix, so
              validate.py rejects them instead.
+    Raises:  TypeError if df_raw is not a DataFrame; ValueError if target_column is given but absent.
     Why:     later steps rely on consistent names, real dates and a stable order; exact duplicates
              would double-count a day.
     """
+    if not isinstance(df_raw, pd.DataFrame):
+        raise TypeError(f"clean_dataframe expects a pandas DataFrame, got {type(df_raw).__name__}. "
+                        "Pass the output of load_raw_data.")
     df = df_raw.copy()
     df.columns = [str(column).strip().lower().replace(" ", "_") for column in df.columns]
-    if DATE_COLUMN in df.columns:
-        df[DATE_COLUMN] = pd.to_datetime(df[DATE_COLUMN])
+    if date_column is not None and date_column in df.columns:
+        df[date_column] = pd.to_datetime(df[date_column])
 
     n_before = len(df)
     df = df.drop_duplicates()
@@ -55,7 +59,7 @@ def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> p
         df = df.dropna(subset=[target_column])
         _log_dropped(f"missing-{target_column}", n_before, len(df))
 
-    order = [column for column in (DATE_COLUMN, TICKER_COLUMN) if column in df.columns]
+    order = [column for column in (sort_by or []) if column in df.columns]
     if order:
         df = df.sort_values(order)
     return df.reset_index(drop=True)
@@ -69,18 +73,20 @@ def _log_dropped(kind: str, before: int, after: int) -> None:
         logger.info("No %s rows dropped (%d rows)", kind, before)
 
 
-def to_wide(df: pd.DataFrame, value_column: str, tickers: list[str]) -> pd.DataFrame:
+def to_wide(df: pd.DataFrame, value_column: str, tickers: list[str], date_column: str,
+            ticker_column: str) -> pd.DataFrame:
     """Pivot a clean long table to one row per date and one column per ticker.
 
     Inputs:  df, clean long table from clean_dataframe; value_column, the column to spread
-             (e.g. "close"); tickers, the ETFs to keep, in the order the columns should appear.
+             (e.g. "close"); tickers, the ETFs to keep, in the order the columns should appear;
+             date_column and ticker_column, the names from config data.columns.
     Outputs: DataFrame indexed by date (sorted), columns exactly `tickers`, keeping only dates
              where every ticker has a value, so all ETFs share one trading calendar.
     Why:     features and the portfolio code compare ETFs date by date and match columns to target
              weights by position.
     Raises:  ValueError if a requested ticker does not appear in df.
     """
-    present = set(df[TICKER_COLUMN])
+    present = set(df[ticker_column])
     missing = [ticker for ticker in tickers if ticker not in present]
     if missing:
         raise ValueError(
@@ -88,8 +94,8 @@ def to_wide(df: pd.DataFrame, value_column: str, tickers: list[str]) -> pd.DataF
             "or that the raw price file contains them."
         )
 
-    requested = df[df[TICKER_COLUMN].isin(tickers)]
-    wide = requested.pivot(index=DATE_COLUMN, columns=TICKER_COLUMN, values=value_column)
+    requested = df[df[ticker_column].isin(tickers)]
+    wide = requested.pivot(index=date_column, columns=ticker_column, values=value_column)
     wide = wide[tickers]
     wide.columns.name = None
 

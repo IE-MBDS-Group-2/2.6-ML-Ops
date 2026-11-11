@@ -26,7 +26,8 @@ import pandas as pd
 import yaml
 from sklearn.model_selection import train_test_split
 
-from src import clean_data, evaluate, features, infer, load_data, portfolio, train, utils, validate
+from src import (clean_data, evaluate, features, infer, load_data, portfolio,
+                 train, utils, validate)
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,6 @@ REQUIRED_SECTIONS = (
     "paths", "data", "portfolio", "problem", "split", "features",
     "model", "quality_gate", "fallback", "costs", "logging",
 )
-NOT_FEATURES = ("rule_action", "best_action")
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 
 
@@ -147,10 +147,12 @@ def _load_prices(path: Path, cfg: dict) -> pd.DataFrame:
     Why:     training and inference data go through the same three steps, so they cannot differ.
     Raises:  FileNotFoundError, ValueError (from load_data and validate).
     """
-    clean = clean_data.clean_dataframe(load_data.load_raw_data(path))
+    cols = cfg["data"]["columns"]
+    clean = clean_data.clean_dataframe(
+        load_data.load_raw_data(path), date_column=cols["date"], sort_by=[cols["date"], cols["ticker"]])
     validate.validate_dataframe(
         clean, cfg["data"]["required_columns"], tickers=cfg["data"]["tickers"],
-        max_abs_daily_return=cfg["data"]["max_abs_daily_return"],
+        max_abs_daily_return=cfg["data"]["max_abs_daily_return"], price_columns=cols,
     )
     return clean
 
@@ -161,9 +163,10 @@ def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
     Inputs:  clean, the validated long table; cfg, the full config (reads data and features).
     Outputs: (close_wide, volume_wide, market_features), all date x column and on one calendar.
     """
-    tickers = cfg["data"]["tickers"]
-    close_wide = clean_data.to_wide(clean, "close", tickers)
-    volume_wide = clean_data.to_wide(clean, "volume", tickers).reindex(close_wide.index)
+    tickers, cols = cfg["data"]["tickers"], cfg["data"]["columns"]
+    close_wide = clean_data.to_wide(clean, cols["close"], tickers, cols["date"], cols["ticker"])
+    volume_wide = clean_data.to_wide(
+        clean, cols["volume"], tickers, cols["date"], cols["ticker"]).reindex(close_wide.index)
     market = features.compute_market_features(
         close_wide, cfg["features"]["return_weeks"], cfg["features"]["vol_days"])
     return close_wide, volume_wide, market
@@ -185,7 +188,7 @@ def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
     labelled = table.dropna(subset=[target_column])
     train_rows, val_rows, _sealed_test = _split_by_date(
         labelled, cfg["split"]["train_end"], cfg["split"]["val_end"])
-    columns = [name for name in table.columns if name not in NOT_FEATURES]
+    columns = [name for name in table.columns if name not in (portfolio.RULE_ACTION_COLUMN, target_column)]
     model = train.train_model(
         train_rows[columns], train_rows[target_column],
         features.get_feature_preprocessor(columns), cfg["problem"]["problem_type"],
@@ -280,7 +283,7 @@ def _recommendations(model, columns: list[str], cfg: dict) -> pd.DataFrame:
     inputs = table[columns]
     predictions = infer.run_inference(model, inputs, include_proba=True)
     return infer.apply_fallback(
-        predictions, table["rule_action"], inputs.isna().any(axis=1),
+        predictions, table[portfolio.RULE_ACTION_COLUMN], inputs.isna().any(axis=1),
         cfg["fallback"]["min_probability"])
 
 

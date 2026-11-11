@@ -20,6 +20,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.pipeline import Pipeline
@@ -91,7 +92,7 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series, preprocessor: ColumnT
     else:
         logger.info("Training on %d rows; target mean %.4f", len(X_train), float(y_train.mean()))
     model = Pipeline([
-        ("preprocess", preprocessor),
+        ("preprocess", clone(preprocessor)),  # fit a copy: the caller's recipe stays unfitted
         ("model", _make_estimator(problem_type, params, random_state)),
     ])
     model.fit(X_train, y_train)

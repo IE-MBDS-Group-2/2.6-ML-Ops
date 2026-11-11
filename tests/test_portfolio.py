@@ -23,6 +23,7 @@ def make_cfg() -> dict:
             "reward": {"penalty_lambda": 1.0},
         },
         "costs": {"aum": AUM, "model": "flat", "flat": {"rate": 0.001}, "slippage": {"adv_window": 20}},
+        "problem": {"target_column": "best_action", "id_column": "decision_date"},
     }
 
 
