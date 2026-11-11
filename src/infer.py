@@ -49,11 +49,11 @@ def run_inference(model: Pipeline, X_infer: pd.DataFrame, include_proba: bool = 
 
 
 def apply_fallback(preds: pd.DataFrame, rule_actions: pd.Series, missing_input: pd.Series,
-                   min_probability: float) -> pd.DataFrame:
+                   min_probability: float = 0.60) -> pd.DataFrame:
     """Replace unsure or incomplete predictions with today's rule action.
 
     Inputs:  preds: output of run_inference(..., include_proba=True); rule_actions: today's rule action per row;
-             missing_input: True where any model input was missing; min_probability: confidence needed (e.g. 0.60).
+             missing_input: True where any model input was missing; min_probability: confidence needed (default 0.60).
              All three share the same index.
     Outputs: Copy of preds plus "recommendation" (the action to take) and "fallback" (True where the rule was used).
     Why:     The model only overrides today's rule when it is confident and fully informed.

@@ -82,6 +82,12 @@ def test_unit_apply_fallback_low_probability_uses_rule():
     assert out["fallback"].tolist() == [False, True, False]
 
 
+def test_unit_apply_fallback_default_threshold_is_0_60():
+    """Called without min_probability, the TEAM_BRIEF default of 0.60 applies (0.59 falls back, 0.60 does not)."""
+    out = infer.apply_fallback(_preds([0.60, 0.59, 0.90]), RULE, NOTHING_MISSING)
+    assert out["fallback"].tolist() == [False, True, False]
+
+
 def test_unit_apply_fallback_missing_input_uses_rule():
     """A confident model still falls back when one of its inputs was missing (last row)."""
     missing = pd.Series([False, False, True], index=FRIDAYS)
