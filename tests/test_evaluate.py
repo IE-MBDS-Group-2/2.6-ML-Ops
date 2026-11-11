@@ -6,7 +6,7 @@ import pytest
 from sklearn.dummy import DummyClassifier
 from sklearn.pipeline import Pipeline
 
-from src import evaluate
+from src import evaluate, features, train
 
 # ---------------------------------------------------------------- portfolio_metrics
 
@@ -152,14 +152,11 @@ def test_unit_evaluate_model_unknown_problem_type_raises():
         evaluate.evaluate_model(_always_one_model(), pd.DataFrame({"x": [0.0]}), pd.Series([1.0]), "regression")
 
 
-@pytest.mark.skip(reason="Awaiting train.py in dev (issue #22)")
 def test_integration_train_model_scored_by_evaluate_model():
     """A pipeline fitted by train.train_model can be scored by evaluate_model end to end."""
-    from src import train  # pylint: disable=import-outside-toplevel
-
     X = pd.DataFrame({"x": np.arange(30, dtype=float)})
     y = pd.Series([0.0, 0.5, 1.0] * 10)
-    model = train.train_model(X, y)
+    model = train.train_model(X, y, features.get_feature_preprocessor(["x"]), "classification")
     result = evaluate.evaluate_model(model, X, y, "classification")
     assert 0.0 <= result["accuracy"] <= 1.0
     assert 0.0 <= result["f1_macro"] <= 1.0
