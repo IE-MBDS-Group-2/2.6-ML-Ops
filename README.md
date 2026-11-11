@@ -28,7 +28,7 @@ Move the balanced portfolio's max drawdown from the baseline by a reduction set 
 | Type | Metric (exact name) | Baseline | Target or threshold |
 | --- | --- | --- | --- |
 | Business KPI | max drawdown | To be measured | Set after the feasibility check (aspiration: at least 20% smaller) |
-| ML metric | `max_drawdown` (closer to zero is better), median of 5 training runs, 2022 to 2025 | To be measured | Smaller than baseline by the KPI target |
+| ML metric | `max_drawdown_reduction` (higher is better): 1 - agent max drawdown / baseline max drawdown, both as losses, so 0.20 means a 20% smaller worst loss. Quality gate, measured on validation 2020 to 2021 against today's rule | 0 (today's rule) | `>=` 0.20 |
 | Guard | annual net return | To be measured | No more than 0.25 percentage points below baseline |
 | Guard | annual trading cost | To be measured | No more than 2 x baseline |
 | Guard | `tracking_error` to target weights (annualised) | To be measured | No more than X, set from the baseline on 2020 to 2021 |
@@ -52,9 +52,9 @@ Timing rule: decision at the close of Friday t, trade at the close of the next t
 Fallback: if the model is unavailable or unsure, the current process applies unchanged. "Unsure" means the preferred action has less than 60% probability (ESTIMATE), or any input is missing or stale. The portfolio manager approves every trade. A large change (total buys plus sells above 10% of portfolio value in one week, ESTIMATE) also goes to the monthly Investment Committee.
 
 ### Data
-Source: Yahoo Finance daily prices for SPY, EFA, IEF, GLD and BIL via `yfinance` (version pinned in `environment.yml`). Yahoo owns the data. [TEAM MEMBER] owns the frozen snapshot. Size: about 4,700 trading days x 5 ETFs, May 2007 to December 2025, with the first ~60 trading days used only to warm up the inputs. First decision date: 2007-09-07. Split by time: train 2007-09-07 to 2019-12-31, validation 2020 to 2021, test 2022 to 2025. Starting in 2007 puts the 2008 crash in the training data.
+Source: Yahoo Finance daily prices for SPY, EFA, IEF, GLD and BIL via `yfinance` (version pinned in `environment.yml`). Yahoo owns the data. Ricardo Arciniegas owns the frozen snapshot. Size: about 4,700 trading days x 5 ETFs, May 2007 to December 2025, with the first ~60 trading days used only to warm up the inputs. First decision date: 2007-09-07. Split by time: train 2007-09-07 to 2019-12-31, validation 2020 to 2021, test 2022 to 2025. Starting in 2007 puts the 2008 crash in the training data.
 
-Label: no target column. The reward is the next window's portfolio return minus 0.1% of the value traded, minus a penalty for new drops below the previous high. Refresh: weekly in operation. For the project, one frozen snapshot versioned with DVC and a checksum. Training never downloads data.
+Label: `best_action`, one of 0.0, 0.5 or 1.0 (the share of the way back to target), the action with the best reward for the coming week. The reward is the next window's portfolio return minus 0.1% of the value traded, minus a penalty for new drops below the previous high. The Stage 2 model is a classifier that predicts this label; the reinforcement learning agent described above is a Stage 3 challenger. Refresh: weekly in operation. For the project, one frozen snapshot, shared directly with the team and not committed to Git (Yahoo's API terms allow personal use only). Its SHA-256 checksum is recorded in `TEAM_BRIEF.md`. Training never downloads data.
 
 Personal or sensitive data: NO. Public prices only. The client and portfolio are hypothetical. Yahoo Finance is a stand-in for this course project. Operation at a firm would require a licensed market data source.
 
@@ -101,8 +101,8 @@ Scales to (ideas, not findings): the firm's conservative and growth model portfo
 7. Before any training: a timing-only agent with perfect foresight on 2007 to 2021 sets the ceiling for the drawdown reduction. The KPI target is set from it. Rough estimate: timing alone may not reach 20%, because the agent cannot hold fewer stocks than drift already gives it, and in 2022 stocks and bonds fell together so drift was small.
 8. Evidence limits: 2020 to 2021 includes the COVID crash, and there are only about 950 weekly decisions in total (ESTIMATE). Not yet in the risk table.
 9. "Wide drift band" as the cause is a hypothesis. The band research is not done.
-10. `[TEAM MEMBER]` placeholder: name the snapshot owner and who read Yahoo's terms, with the date.
-11. Check the `yfinance` notes for the pinned version (the cited pages were for older versions), confirm the tickers. Confirmed: all five ETFs have Yahoo data from 2007-05-30 (BIL is the latest).
+10. The snapshot owner is named (Ricardo Arciniegas). Still open: name who read Yahoo's terms, with the date.
+11. Check the `yfinance` notes for the pinned version (the cited pages were for older versions), confirm the tickers. Confirmed: all five ETFs have Yahoo data from 2007-05-30 (BIL is the latest). Verified by the snapshot download on 11 Nov 2026: 4,679 trading days per ticker, no gaps, no missing values. `yfinance` is listed in `environment.yml` without a pinned version, although the Data section says it is pinned.
 12. The drift monitor alert limit has no number. The €0.01 cost limit is compute only. The scaling claims are ideas.
 13. Challengers check weekly, whereas Indexa monitors daily. The project name is not chosen.
 
