@@ -162,6 +162,14 @@ def _check_target(close_wide: pd.DataFrame, target: pd.Series) -> list[str]:
     return list(close_wide.columns)
 
 
+def _problem_column(cfg: dict, key: str) -> str:
+    """Read problem.<key> (a column name) from the config; a clear error beats a bare KeyError."""
+    name = cfg.get("problem", {}).get(key)
+    if not name:
+        raise ValueError(f"Config has no problem.{key}. Add it to the problem section of config.yaml.")
+    return name
+
+
 def _prepare_run(prices: tuple[pd.DataFrame, pd.DataFrame], market_features: pd.DataFrame, target: pd.Series,
                  period: tuple[str, str], cfg: dict) -> dict:
     """Everything simulate needs before the daily loop: calendar, schedule, returns, ADV, market rows."""
@@ -176,7 +184,7 @@ def _prepare_run(prices: tuple[pd.DataFrame, pd.DataFrame], market_features: pd.
         "target": target.reindex(tickers),
         "days": days,
         "decisions": decisions,
-        "id_column": cfg["problem"]["id_column"],
+        "id_column": _problem_column(cfg, "id_column"),
         "to_execute": {executed: decided for decided, executed in schedule["execution_date"].dropna().items()},
         "returns": close_wide[tickers].pct_change(fill_method=None).reindex(days),
         "adv": costs.average_daily_dollar_volume(close_wide[tickers], volume_wide[tickers], window),
@@ -315,7 +323,7 @@ def _labels(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFra
                                             cfg["costs"]["slippage"]["adv_window"])
     peaks = daily["value"].cummax()
     weight_columns = [f"w_{ticker}" for ticker in target.index]
-    labels = pd.Series(np.nan, index=decisions.index, name=cfg["problem"]["target_column"])
+    labels = pd.Series(np.nan, index=decisions.index, name=_problem_column(cfg, "target_column"))
     for decided, when in execution_schedule(daily.index, decisions.index).dropna().iterrows():
         state = {"weights": decisions.loc[decided, weight_columns].set_axis(target.index).astype(float),
                  "value": daily.at[decided, "value"], "peak": peaks.at[decided], "adv": adv.loc[decided]}
@@ -341,7 +349,7 @@ def build_decision_table(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, ma
     policy = make_current_rule_policy(target, decision_dates(days, start, end), cfg)
     daily, decisions = simulate(close_wide, volume_wide, market_features, target, policy, start, end, cfg)
     target = target.reindex(close_wide.columns)
-    target_column = cfg["problem"]["target_column"]
+    target_column = _problem_column(cfg, "target_column")
     table = decisions.rename(columns={"action": RULE_ACTION_COLUMN})
     table[target_column] = _labels(daily, decisions, close_wide, volume_wide, target, cfg)
     logger.info("Decision table: %d rows, label counts %s", len(table),
