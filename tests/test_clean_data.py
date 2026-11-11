@@ -5,6 +5,8 @@ import pytest
 
 from src import clean_data, validate
 
+PRICES = {"date_column": "date", "sort_by": ["date", "ticker"]}  # what main.py passes from data.columns
+
 
 def make_raw_prices() -> pd.DataFrame:
     """Tiny long price table: 2 dates x 2 tickers, plus 1 exact duplicate row, shuffled."""
@@ -20,7 +22,7 @@ def make_raw_prices() -> pd.DataFrame:
 
 def test_unit_clean_dataframe_drops_exact_duplicate_rows():
     """5 rows with 1 exact duplicate (2024-01-02, SPY, 100.0, 900) must give 4 rows."""
-    result = clean_data.clean_dataframe(make_raw_prices())
+    result = clean_data.clean_dataframe(make_raw_prices(), **PRICES)
     assert len(result) == 4
 
 
@@ -28,14 +30,14 @@ def test_unit_clean_dataframe_keeps_conflicting_rows_for_validate():
     """Same (date, ticker) but another price (100 vs 999) is no exact duplicate: both stay."""
     raw = make_raw_prices()
     raw.loc[4, "Close"] = 999.0
-    result = clean_data.clean_dataframe(raw)
+    result = clean_data.clean_dataframe(raw, **PRICES)
     spy_day = result[(result["ticker"] == "SPY") & (result["date"] == "2024-01-02")]
     assert sorted(spy_day["close"]) == [100.0, 999.0]
 
 
 def test_unit_clean_dataframe_standardises_names_types_and_order():
     """Columns lowercase, date parsed to datetime, rows sorted by date then ticker, index 0..n-1."""
-    result = clean_data.clean_dataframe(make_raw_prices())
+    result = clean_data.clean_dataframe(make_raw_prices(), **PRICES)
     assert list(result.columns) == ["date", "ticker", "close", "volume"]
     assert pd.api.types.is_datetime64_any_dtype(result["date"])
     assert list(zip(result["date"].dt.strftime("%Y-%m-%d"), result["ticker"])) == [
@@ -48,7 +50,7 @@ def test_unit_clean_dataframe_does_not_modify_input():
     """Cleaning returns a new frame; the caller's raw frame stays exactly as it was."""
     raw = make_raw_prices()
     original = raw.copy()
-    clean_data.clean_dataframe(raw)
+    clean_data.clean_dataframe(raw, **PRICES)
     pd.testing.assert_frame_equal(raw, original)
 
 
@@ -67,31 +69,32 @@ def make_clean_long() -> pd.DataFrame:
 
 def test_unit_to_wide_drops_dates_missing_a_ticker():
     """2024-01-03 has SPY but no EFA, so only the 2 complete dates survive."""
-    result = clean_data.to_wide(make_clean_long(), "close", ["SPY", "EFA"])
+    result = clean_data.to_wide(make_clean_long(), "close", ["SPY", "EFA"], "date", "ticker")
     assert list(result.index) == list(pd.to_datetime(["2024-01-02", "2024-01-04"]))
     assert result.loc[pd.Timestamp("2024-01-04"), "EFA"] == 72.0
 
 
 def test_unit_to_wide_columns_follow_tickers_order():
     """Columns come out in the order given (SPY before EFA), not alphabetical."""
-    result = clean_data.to_wide(make_clean_long(), "close", ["SPY", "EFA"])
+    result = clean_data.to_wide(make_clean_long(), "close", ["SPY", "EFA"], "date", "ticker")
     assert list(result.columns) == ["SPY", "EFA"]
 
 
 def test_unit_to_wide_raises_on_missing_ticker():
     """Asking for a ticker that is not in the data (GLD) must stop with a clear error."""
     with pytest.raises(ValueError, match="GLD"):
-        clean_data.to_wide(make_clean_long(), "close", ["SPY", "EFA", "GLD"])
+        clean_data.to_wide(make_clean_long(), "close", ["SPY", "EFA", "GLD"], "date", "ticker")
 
 
 def test_integration_clean_output_passes_validate():
     """Whatever clean_dataframe returns must be accepted by the quality gate."""
-    cleaned = clean_data.clean_dataframe(make_raw_prices())
+    cleaned = clean_data.clean_dataframe(make_raw_prices(), **PRICES)
     assert validate.validate_dataframe(
         cleaned,
         required_columns=["date", "ticker", "close", "volume"],
         tickers=["SPY", "EFA"],
         max_abs_daily_return=0.25,
+        price_columns={"date": "date", "ticker": "ticker", "close": "close", "volume": "volume"},
     )
 
 

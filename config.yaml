@@ -16,6 +16,11 @@ data:
   start: "2007-05-30"            # BIL starts here; ~60 days only warm up features
   end: "2025-12-31"
   required_columns: ["date", "ticker", "close", "volume"]
+  columns:                       # what each price column is called; modules get these names as arguments
+    date: "date"
+    ticker: "ticker"
+    close: "close"
+    volume: "volume"
   max_abs_daily_return: 0.25     # validate.py stops above this
   inference_days: 300            # fetch_prices.py: trading days kept in the inference file
 
