@@ -138,7 +138,8 @@ def make_current_rule_policy(target: pd.Series, decisions: pd.DatetimeIndex, cfg
     decisions = pd.DatetimeIndex(decisions)
     months = decisions.to_period("M")
     first_in_month = np.r_[True, months[1:] != months[:-1]]
-    quarter_starts = set(decisions[first_in_month & decisions.month.isin(rule["quarter_months"])])
+    in_quarter_month = decisions.to_series().dt.month.isin(rule["quarter_months"]).to_numpy()
+    quarter_starts = set(decisions[first_in_month & in_quarter_month])
     tickers = list(target.index)
 
     def policy(state_row: pd.Series) -> float:
@@ -222,8 +223,6 @@ def _decide(day: pd.Timestamp, book: dict, run: dict, policy, cfg: dict) -> pd.S
     return state
 
 
-# The spec (docs/MODULE_SPECS.md) fixes these 8 arguments, so the project-wide limit of 6 is waived here only.
-# pylint: disable-next=too-many-arguments,too-many-positional-arguments
 def simulate(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_features: pd.DataFrame,
              target: pd.Series, policy, start: str, end: str, cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run any policy through the README timing rule and trading costs.
@@ -306,7 +305,6 @@ def _label(state: dict, blocks: tuple[pd.DataFrame, pd.DataFrame], target: pd.Se
     return best_action
 
 
-# pylint: disable-next=too-many-arguments,too-many-positional-arguments
 def _labels(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFrame, volume_wide: pd.DataFrame,
             target: pd.Series, cfg: dict) -> pd.Series:
     """best_action for every decision with a full reward window; NaN for the rest (the last one)."""
@@ -325,8 +323,6 @@ def _labels(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFra
     return labels
 
 
-# The spec (docs/MODULE_SPECS.md) fixes these 7 arguments, so the project-wide limit of 6 is waived here only.
-# pylint: disable-next=too-many-arguments,too-many-positional-arguments
 def build_decision_table(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_features: pd.DataFrame,
                          target: pd.Series, start: str, end: str, cfg: dict) -> pd.DataFrame:
     """The table the model learns from: one row per decision date, state + market features + label.

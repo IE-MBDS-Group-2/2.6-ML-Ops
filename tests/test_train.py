@@ -97,7 +97,6 @@ def test_unit_train_model_raises_when_random_state_is_given_twice():
         train.train_model(X, y, make_preprocessor(), "classification", {"random_state": 1})
 
 
-@pytest.mark.skip(reason="Awaiting features and utils in dev")
 def test_integration_preprocessor_then_train_then_saved_model_predicts_the_same(tmp_path):
     from src import features, utils  # pylint: disable=import-outside-toplevel
 
