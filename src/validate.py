@@ -41,22 +41,17 @@ def validate_dataframe(
     Outputs: True when every check passes.
     Why:     catching bad data here is cheap; finding it after training is not.
     Raises:  TypeError if df is not a DataFrame. ValueError naming the problem and how to fix it, for:
-             missing columns, empty table, empty values in a required column, and, for a price table (date
-             and ticker columns), conflicting (date, ticker) rows, absent ticker, a ticker with fewer dates,
+             tickers or max_abs_daily_return given without price_columns, missing columns, empty table,
+             empty values in a required column, and, for a price table (price_columns given), a missing
+             price column, conflicting (date, ticker) rows, absent ticker, a ticker with fewer dates,
              close <= 0, volume < 0, an extreme daily return.
     """
     if not isinstance(df, pd.DataFrame):
         raise TypeError(f"validate_dataframe expects a pandas DataFrame, got {type(df).__name__}.")
-    missing = [column for column in required_columns if column not in df.columns]
-    if missing:
-        raise ValueError(
-            f"Missing required columns {missing}. Check the raw file header and clean_dataframe."
-        )
-    if df.empty:
-        raise ValueError(
-            "The table is empty. Check that the raw file has rows and was loaded correctly."
-        )
-
+    if price_columns is None and (tickers is not None or max_abs_daily_return is not None):
+        raise ValueError("tickers and max_abs_daily_return are price-table rules and need price_columns. "
+                         "Pass data.columns from config.yaml, or leave both as None.")
+    _check_columns_and_rows(df, required_columns, price_columns)
     if target_column is not None:
         _check_target(df, target_column)
     _check_no_missing_values(df, required_columns, price_columns)
@@ -66,12 +61,25 @@ def validate_dataframe(
     return True
 
 
+def _check_columns_and_rows(df: pd.DataFrame, required_columns: list[str], cols: dict[str, str] | None) -> None:
+    """Raise if a required column or a configured price column is absent, or if the table has no rows."""
+    missing = [column for column in required_columns if column not in df.columns]
+    if missing:
+        raise ValueError(
+            f"Missing required columns {missing}. Check the raw file header and clean_dataframe."
+        )
+    absent = [name for name in (cols or {}).values() if name not in df.columns]
+    if absent:
+        raise ValueError(f"Price columns {absent} are missing. Check data.columns in config.yaml.")
+    if df.empty:
+        raise ValueError(
+            "The table is empty. Check that the raw file has rows and was loaded correctly."
+        )
+
+
 def _check_price_table(df: pd.DataFrame, cols: dict[str, str], tickers: list[str] | None,
                        max_abs_daily_return: float | None) -> None:
     """Price-table rules (one row per date and ticker); cols maps date, ticker, close, volume to column names."""
-    missing = [cols[role] for role in ("date", "ticker", "close", "volume") if cols[role] not in df.columns]
-    if missing:
-        raise ValueError(f"Price columns {missing} are missing. Check data.columns in config.yaml.")
     _check_one_row_per_date_ticker(df, cols)
     if tickers is not None:
         _check_tickers_present(df, cols, tickers)

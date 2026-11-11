@@ -108,7 +108,8 @@ def validate_dataframe(df: pd.DataFrame, required_columns: list[str], target_col
 ```
 
 `price_columns` is `data.columns` from the config. The price-table rules below run only when it is given; without
-it only the general rules run (required columns, empty frame, empty values, target).
+it only the general rules run (required columns, empty frame, empty values, target). Passing `tickers` or
+`max_abs_daily_return` without `price_columns` raises a `ValueError`, so a rule is never skipped silently.
 
 Returns `True` or raises `ValueError` with a clear message. It never fixes data. It stops on:
 - missing required columns, or an empty frame;

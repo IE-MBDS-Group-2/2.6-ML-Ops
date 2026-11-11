@@ -125,3 +125,9 @@ def test_unit_train_model_leaves_the_callers_preprocessor_unfitted():
     model = train.train_model(X, y, preprocessor, "classification", MODEL_PARAMS)
     check_is_fitted(model)
     assert not hasattr(preprocessor, "transformers_")
+
+
+def test_unit_train_model_accepts_passthrough_as_the_preprocessor():
+    X, y = make_data()
+    model = train.train_model(X, y, "passthrough", "classification", MODEL_PARAMS)
+    assert len(model.predict(X)) == len(X)

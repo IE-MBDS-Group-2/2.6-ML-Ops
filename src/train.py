@@ -69,6 +69,11 @@ def _make_estimator(problem_type: str, params: dict, random_state: int):
     return ActionClassifier(random_state=random_state, **params)
 
 
+def _unfitted_copy(preprocessor):
+    """A fresh copy to fit, so the caller's recipe stays unfitted; "passthrough" and None have nothing to copy."""
+    return clone(preprocessor) if hasattr(preprocessor, "get_params") else preprocessor
+
+
 def train_model(X_train: pd.DataFrame, y_train: pd.Series, preprocessor: ColumnTransformer, problem_type: str,
                 model_params: dict | None = None, random_state: int = 42) -> Pipeline:
     """Course contract: bundle the feature recipe and LogisticRegression into one pipeline and fit it.
@@ -92,7 +97,7 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series, preprocessor: ColumnT
     else:
         logger.info("Training on %d rows; target mean %.4f", len(X_train), float(y_train.mean()))
     model = Pipeline([
-        ("preprocess", clone(preprocessor)),  # fit a copy: the caller's recipe stays unfitted
+        ("preprocess", _unfitted_copy(preprocessor)),
         ("model", _make_estimator(problem_type, params, random_state)),
     ])
     model.fit(X_train, y_train)
