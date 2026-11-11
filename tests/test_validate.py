@@ -111,7 +111,6 @@ def test_unit_validate_raises_on_extreme_daily_return():
         run_gate(df)
 
 
-@pytest.mark.skip(reason="Awaiting clean_data in dev")
 def test_integration_clean_output_passes_validate():
     """clean_dataframe output on messy raw data is accepted by the gate."""
     raw = make_valid_long().rename(columns=str.upper)
