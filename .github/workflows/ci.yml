@@ -1,0 +1,25 @@
+name: ci
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+permissions:
+  contents: read
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yml
+          activate-environment: mlops-group2
+          auto-activate-base: false
+      - name: flake8
+        run: flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
+      - name: pytest with branch coverage
+        run: pytest --cov=src --cov-branch --cov-report=term-missing
