@@ -11,3 +11,26 @@
 #   stage 3               config, tracking, serving and locking tools
 #
 # Stage 3: conda-lock.yml freezes these into exact versions for CI and Docker
+# environment.yml  [Shared conda environment for the team pipeline]
+name: mlops-group2
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  # pipeline packages (every import in src/)
+  - pandas
+  - numpy
+  - scikit-learn
+  - joblib
+  - pyyaml
+  # dev tools (check code, not needed to run it)
+  - pytest
+  - pytest-cov
+  - flake8
+  - pylint
+  - radon
+  - black
+  - isort
+  - pip
+  - pip:
+      - detect-secrets

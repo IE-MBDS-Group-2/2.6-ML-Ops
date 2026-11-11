@@ -1,0 +1,6 @@
+# .pylintrc  [pylint settings]
+# Same line length as flake8 (see .flake8 and the CI workflow), so both tools agree.
+# Pylint's own default is 100 and it does not read .flake8.
+
+[FORMAT]
+max-line-length=120
