@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_is_fitted
@@ -52,6 +53,10 @@ def test_unit_train_model_known_value_separable_clusters_are_learned():
     model = train.train_model(X, y, make_preprocessor(), "classification", MODEL_PARAMS)
     centres = pd.DataFrame({"drift_SPY": [-3.0, 0.0, 3.0], "drawdown": [0.0, 3.0, 0.0]})
     assert list(model.predict(centres)) == [0.0, 0.5, 1.0]
+    # The real action labels come back (sklearn alone rejects 0.5 as a "continuous" label).
+    assert isinstance(model.named_steps["model"], LogisticRegression)
+    assert list(model.named_steps["model"].classes_) == [0.0, 0.5, 1.0]
+    assert model.predict_proba(centres).shape == (3, 3)
 
 
 def test_unit_train_model_passes_config_params_and_seed_to_the_model():
