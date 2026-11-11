@@ -30,8 +30,12 @@ Tests     tests/test_costs.py
 """
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 _BPS = 1e-4
 
@@ -89,6 +93,7 @@ def trade_costs(delta_w, aum: float, adv=None, cfg: dict | None = None):
         raise ValueError("cfg (the costs section of config.yaml) is required")
     delta_w = np.asarray(delta_w, dtype=float)
     model = cfg["model"]
+    logger.debug("Trade costs: %s model, %d assets, aum %.0f", model, delta_w.size, aum)
 
     if model == "flat":
         return np.abs(delta_w) * cfg["flat"]["rate"]
