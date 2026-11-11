@@ -39,7 +39,8 @@ class ActionClassifier(LogisticRegression):  # pylint: disable=too-many-ancestor
     0.0 / 0.5 / 1.0 and predict_proba columns follow classes_. Same parameters as LogisticRegression.
     """
 
-    def fit(self, X, y, sample_weight=None):
+    def fit(self, X: pd.DataFrame, y: pd.Series, sample_weight: np.ndarray | None = None) -> ActionClassifier:
+        """Fit on class codes, then put the real action labels back in classes_; returns self."""
         labels, codes = np.unique(np.asarray(y), return_inverse=True)
         super().fit(X, codes, sample_weight=sample_weight)
         # sklearn convention: fitted attributes (trailing _) are set in fit, never in __init__.
@@ -62,14 +63,14 @@ def _check_inputs(X_train: pd.DataFrame, y_train: pd.Series, problem_type: str, 
                          "not inside model_params.")
 
 
-def _make_estimator(problem_type: str, params: dict, random_state: int):
+def _make_estimator(problem_type: str, params: dict, random_state: int) -> ActionClassifier | Ridge:
     """The estimator for the problem type: ActionClassifier for classification, Ridge for regression."""
     if problem_type == "regression":
         return Ridge(random_state=random_state, **params)
     return ActionClassifier(random_state=random_state, **params)
 
 
-def _unfitted_copy(preprocessor):
+def _unfitted_copy(preprocessor: ColumnTransformer | str | None) -> ColumnTransformer | str | None:
     """A fresh copy to fit, so the caller's recipe stays unfitted; "passthrough" and None have nothing to copy."""
     return clone(preprocessor) if hasattr(preprocessor, "get_params") else preprocessor
 

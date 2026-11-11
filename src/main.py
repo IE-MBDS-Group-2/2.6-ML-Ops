@@ -20,11 +20,13 @@ Tests     tests/test_main.py
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
 import yaml
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
 
 from src import (clean_data, evaluate, features, infer, load_data, portfolio,
                  train, utils, validate)
@@ -149,7 +151,8 @@ def _load_prices(path: Path, cfg: dict) -> pd.DataFrame:
     """
     cols = cfg["data"]["columns"]
     clean = clean_data.clean_dataframe(
-        load_data.load_raw_data(path), date_column=cols["date"], sort_by=[cols["date"], cols["ticker"]])
+        load_data.load_raw_data(path), date_column=cols["date_column"],
+        sort_by=[cols["date_column"], cols["ticker_column"]])
     validate.validate_dataframe(
         clean, cfg["data"]["required_columns"], tickers=cfg["data"]["tickers"],
         max_abs_daily_return=cfg["data"]["max_abs_daily_return"], price_columns=cols,
@@ -164,9 +167,9 @@ def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
     Outputs: (close_wide, volume_wide, market_features), all date x column and on one calendar.
     """
     tickers, cols = cfg["data"]["tickers"], cfg["data"]["columns"]
-    close_wide = clean_data.to_wide(clean, cols["close"], tickers, cols["date"], cols["ticker"])
+    close_wide = clean_data.to_wide(clean, cols["close_column"], tickers, cols["date_column"], cols["ticker_column"])
     volume_wide = clean_data.to_wide(
-        clean, cols["volume"], tickers, cols["date"], cols["ticker"]).reindex(close_wide.index)
+        clean, cols["volume_column"], tickers, cols["date_column"], cols["ticker_column"]).reindex(close_wide.index)
     market = features.compute_market_features(
         close_wide, cfg["features"]["return_weeks"], cfg["features"]["vol_days"])
     return close_wide, volume_wide, market
@@ -199,14 +202,15 @@ def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
     return model, columns, val_rows, scores
 
 
-def _model_policy(model, columns: list[str]):
+def _model_policy(model: Pipeline, columns: list[str]) -> Callable[[pd.Series], float]:
     """Wrap the fitted model as a policy: a function from a state row to an action."""
     def policy(state_row: pd.Series) -> float:
+        """The model's action for one decision date."""
         return float(model.predict(state_row[columns].to_frame().T.astype(float))[0])
     return policy
 
 
-def _validation_paths(model, columns: list[str], market_data: tuple, cfg: dict) -> tuple:
+def _validation_paths(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict) -> tuple:
     """Run the model and today's rule over the validation years through the same simulate.
 
     Inputs:  model and its feature columns; market_data (close_wide, volume_wide, market);
@@ -262,7 +266,7 @@ def _validation_metrics(scores: dict, daily_frames: tuple, cfg: dict) -> dict:
     }
 
 
-def _recommendations(model, columns: list[str], cfg: dict) -> pd.DataFrame:
+def _recommendations(model: Pipeline, columns: list[str], cfg: dict) -> pd.DataFrame:
     """Recommend an action for every decision date in the inference file.
 
     Inputs:  the fitted model and its feature columns; cfg, the full config.

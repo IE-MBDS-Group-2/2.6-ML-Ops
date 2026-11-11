@@ -5,6 +5,9 @@ import numpy as np
 import pandas as pd
 from sklearn import compose, impute, pipeline, preprocessing
 
+TRADING_DAYS_PER_WEEK = 5     # market calendar, not a setting: weeks -> trading days
+TRADING_DAYS_PER_YEAR = 252   # market calendar, not a setting: daily volatility -> annual
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +33,7 @@ def _validate_price_values(close_wide: pd.DataFrame) -> None:
         )
 
 
-def _is_numeric_price_dtype(dtype) -> bool:
+def _is_numeric_price_dtype(dtype: object) -> bool:
     """Boolean values are not prices, even though Python treats them as numbers."""
     return pd.api.types.is_numeric_dtype(dtype) and not pd.api.types.is_bool_dtype(dtype)
 
@@ -89,10 +92,10 @@ def compute_market_features(
     for ticker in close_wide.columns:
         prices = close_wide[ticker]
         for weeks in return_weeks:
-            result[f"ret_{weeks}w_{ticker}"] = prices / prices.shift(5 * weeks) - 1
+            result[f"ret_{weeks}w_{ticker}"] = prices / prices.shift(TRADING_DAYS_PER_WEEK * weeks) - 1
         daily = prices.pct_change(fill_method=None)
         volatility = daily.rolling(vol_days, min_periods=vol_days).std(ddof=1)
-        result[f"vol_{vol_days}d_{ticker}"] = volatility * np.sqrt(252)
+        result[f"vol_{vol_days}d_{ticker}"] = volatility * np.sqrt(TRADING_DAYS_PER_YEAR)
     output = pd.DataFrame(result, index=close_wide.index)
     logger.info("Computed %d feature columns for %d price rows", len(output.columns), len(output))
     return output

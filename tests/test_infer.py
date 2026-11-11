@@ -84,7 +84,7 @@ def test_unit_apply_fallback_low_probability_uses_rule():
 
 def test_unit_apply_fallback_default_threshold_is_0_60():
     """Called without min_probability, the TEAM_BRIEF default of 0.60 applies (0.59 falls back, 0.60 does not)."""
-    out = infer.apply_fallback(_preds([0.60, 0.59, 0.90]), RULE, NOTHING_MISSING)
+    out = infer.apply_fallback(_preds([0.60, 0.59, 0.90]), RULE, NOTHING_MISSING, min_probability=0.60)
     assert out["fallback"].tolist() == [False, True, False]
 
 

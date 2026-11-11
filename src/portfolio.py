@@ -24,6 +24,7 @@ Tests     tests/test_portfolio.py
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -85,8 +86,8 @@ def current_rule_action(weights: pd.Series, target: pd.Series, date: pd.Timestam
     return 1.0 if fires else 0.0
 
 
-def rebalance_cost(weights: pd.Series, target: pd.Series, action: float, aum: float, adv,
-                   cost_cfg: dict) -> float:
+def rebalance_cost(weights: pd.Series, target: pd.Series, action: float, aum: float,
+                   adv: pd.Series | None, cost_cfg: dict) -> float:
     """Total cost of applying `action`, as a fraction of portfolio value.
 
     Inputs:  weights and target per ticker; action in [0, 1]; aum, capital in the model portfolio;
@@ -127,7 +128,8 @@ def execution_schedule(trading_days: pd.DatetimeIndex, decisions: pd.DatetimeInd
     )
 
 
-def make_current_rule_policy(target: pd.Series, decisions: pd.DatetimeIndex, cfg: dict):
+def make_current_rule_policy(target: pd.Series, decisions: pd.DatetimeIndex,
+                             cfg: dict) -> Callable[[pd.Series], float]:
     """Wrap today's rule as a policy: a function from a state row to an action.
 
     Inputs:  target weights; decisions, the decision dates of the run (to find each quarter's first one);
@@ -144,6 +146,7 @@ def make_current_rule_policy(target: pd.Series, decisions: pd.DatetimeIndex, cfg
     tickers = list(target.index)
 
     def policy(state_row: pd.Series) -> float:
+        """Today's rule for one decision date: 1.0 on a quarter start or a breached band, else 0.0."""
         weights = pd.Series([state_row[f"w_{ticker}"] for ticker in tickers], index=tickers)
         date = pd.Timestamp(state_row.name)
         return current_rule_action(weights, target, date, date in quarter_starts, rule["drift_band"])
@@ -221,7 +224,8 @@ def _state_row(day: pd.Timestamp, book: dict, run: dict, cfg: dict) -> pd.Series
     return pd.Series(row, dtype=float, name=day)
 
 
-def _decide(day: pd.Timestamp, book: dict, run: dict, policy, cfg: dict) -> pd.Series:
+def _decide(day: pd.Timestamp, book: dict, run: dict, policy: Callable[[pd.Series], float],
+            cfg: dict) -> pd.Series:
     """Build the state row, ask the policy, remember the action for the execution day."""
     book["weeks"] += 1
     state = _state_row(day, book, run, cfg)
@@ -234,7 +238,8 @@ def _decide(day: pd.Timestamp, book: dict, run: dict, policy, cfg: dict) -> pd.S
 
 
 def simulate(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_features: pd.DataFrame,
-             target: pd.Series, policy, start: str, end: str, cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+             target: pd.Series, policy: Callable[[pd.Series], float], start: str, end: str,
+             cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run any policy through the README timing rule and trading costs.
 
     Inputs:  close_wide, volume_wide (date x ticker); market_features (date x feature, may have no columns);

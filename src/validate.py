@@ -36,7 +36,7 @@ def validate_dataframe(
              exist; target_column, the label that must be present and complete in training
              data (None for prices and inference); tickers, ETFs that must be present (None skips the check);
              max_abs_daily_return, largest believable one-day move, e.g. 0.25 (None skips it);
-             price_columns, config data.columns ({"date", "ticker", "close", "volume"} -> column name). The
+             price_columns, config data.columns (date_column, ticker_column, close_column, volume_column). The
              price-table rules run only when it is given; tickers and max_abs_daily_return need it.
     Outputs: True when every check passes.
     Why:     catching bad data here is cheap; finding it after training is not.
@@ -103,7 +103,7 @@ def _first_row(rows: pd.DataFrame, cols: dict[str, str] | None) -> str:
     """Describe the first offending row, e.g. 'first: SPY on 2024-01-03' (or 'first: row 7'), so it can be found."""
     first = rows.iloc[0]
     if cols is not None:
-        return f"first: {first[cols['ticker']]} on {pd.Timestamp(first[cols['date']]):%Y-%m-%d}"
+        return f"first: {first[cols['ticker_column']]} on {pd.Timestamp(first[cols['date_column']]):%Y-%m-%d}"
     return f"first: row {rows.index[0]}"
 
 
@@ -121,7 +121,7 @@ def _check_no_missing_values(df: pd.DataFrame, required_columns: list[str], cols
 
 def _check_one_row_per_date_ticker(df: pd.DataFrame, cols: dict[str, str]) -> None:
     """Raise if a (date, ticker) appears more than once, e.g. two different prices for one day."""
-    repeated = df[df.duplicated([cols["date"], cols["ticker"]], keep=False)]
+    repeated = df[df.duplicated([cols["date_column"], cols["ticker_column"]], keep=False)]
     if not repeated.empty:
         raise ValueError(
             f"{len(repeated)} rows share a (date, ticker) with conflicting values, "
@@ -131,7 +131,7 @@ def _check_one_row_per_date_ticker(df: pd.DataFrame, cols: dict[str, str]) -> No
 
 def _check_tickers_present(df: pd.DataFrame, cols: dict[str, str], tickers: list[str]) -> None:
     """Raise if any configured ticker has no rows."""
-    present = set(df[cols["ticker"]])
+    present = set(df[cols["ticker_column"]])
     absent = [ticker for ticker in tickers if ticker not in present]
     if absent:
         raise ValueError(
@@ -141,7 +141,7 @@ def _check_tickers_present(df: pd.DataFrame, cols: dict[str, str], tickers: list
 
 def _check_same_number_of_dates(df: pd.DataFrame, cols: dict[str, str]) -> None:
     """Raise if some ticker has fewer dates than the others (gaps in its history)."""
-    dates_per_ticker = df.groupby(cols["ticker"])[cols["date"]].nunique()
+    dates_per_ticker = df.groupby(cols["ticker_column"])[cols["date_column"]].nunique()
     expected = dates_per_ticker.max()
     short = dates_per_ticker[dates_per_ticker < expected].to_dict()
     if short:
@@ -153,13 +153,13 @@ def _check_same_number_of_dates(df: pd.DataFrame, cols: dict[str, str]) -> None:
 
 def _check_value_ranges(df: pd.DataFrame, cols: dict[str, str]) -> None:
     """Raise on impossible values: a price at or below zero, or negative volume."""
-    bad_close = df[df[cols["close"]] <= 0]
+    bad_close = df[df[cols["close_column"]] <= 0]
     if not bad_close.empty:
         raise ValueError(
             f"{len(bad_close)} rows have close <= 0, {_first_row(bad_close, cols)}. "
             "Prices must be positive; fix the raw data source."
         )
-    bad_volume = df[df[cols["volume"]] < 0]
+    bad_volume = df[df[cols["volume_column"]] < 0]
     if not bad_volume.empty:
         raise ValueError(
             f"{len(bad_volume)} rows have volume < 0, {_first_row(bad_volume, cols)}. "
@@ -169,8 +169,8 @@ def _check_value_ranges(df: pd.DataFrame, cols: dict[str, str]) -> None:
 
 def _check_daily_returns(df: pd.DataFrame, cols: dict[str, str], max_abs_daily_return: float) -> None:
     """Raise if any ticker moves more than max_abs_daily_return in one day (likely a bad price)."""
-    ordered = df.sort_values([cols["ticker"], cols["date"]])
-    moves = ordered.groupby(cols["ticker"])[cols["close"]].pct_change().abs()
+    ordered = df.sort_values([cols["ticker_column"], cols["date_column"]])
+    moves = ordered.groupby(cols["ticker_column"])[cols["close_column"]].pct_change().abs()
     too_big = ordered[moves > max_abs_daily_return]
     if not too_big.empty:
         biggest = moves[too_big.index[0]]

@@ -94,7 +94,8 @@ def test_integration_clean_output_passes_validate():
         required_columns=["date", "ticker", "close", "volume"],
         tickers=["SPY", "EFA"],
         max_abs_daily_return=0.25,
-        price_columns={"date": "date", "ticker": "ticker", "close": "close", "volume": "volume"},
+        price_columns={"date_column": "date", "ticker_column": "ticker", "close_column": "close",
+                       "volume_column": "volume"},
     )
 
 
