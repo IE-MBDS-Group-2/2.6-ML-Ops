@@ -1,37 +1,82 @@
 # config.yaml  [Settings: single source of truth]
-# -------------------------------------------------------------------
-# Purpose   Every NON-SECRET setting the pipeline needs, in one place
-# Read by   main.py (stage 3: through src/config.py), later also api.py
-# Why       Change the target, features or split sizes without touching code
-# Never     Secrets (API keys, passwords). Those go in .env
-#
-# Typical sections
-#   paths     where raw data, model, inference data and predictions live
-#   problem   target column, problem type (classification or regression), ID column
-#   split     test size, validation size, random seed
-#
-# Stage 2: the same values live in a SETTINGS dictionary at the top of src/main.py
-# Stage 3: main.py reads this file instead, with the same key names
+# Every NON-SECRET setting. Read once by src/main.py and passed into modules as arguments.
+# Secrets go in .env. Values marked DECISION come from the 10 Nov call (01_DECISIONS.md).
 
-# -------------------------------------------------------------------
-# costs: execution costs, read by src/costs.py
-# -------------------------------------------------------------------
-costs:
-  # Capital allocated to the balanced MODEL PORTFOLIO (not the firm's total
-  # client assets). ASSUMPTION, placeholder until the team agrees a figure.
-  # Same currency as commission.min_fee. Everyone reads this one value.
-  aum: 100000000
-  # flat      = README baseline, 0.1% of value traded, ignores AUM and volume
-  # realistic = commission + slippage (asymmetric entry/exit + sqrt impact)
-  model: flat
+paths:
+  raw_data: "data/raw/prices.csv"
+  inference_data: "data/inference/prices_latest.csv"
+  processed_data: "data/processed/clean.csv"
+  model: "models/model.joblib"
+  predictions: "reports/predictions.csv"
+  metrics: "reports/metrics.json"
+  log_file: "logs/pipeline.log"
+
+data:
+  tickers: ["SPY", "EFA", "IEF", "GLD", "BIL"]
+  start: "2007-05-30"            # BIL starts here; ~60 days only warm up features
+  end: "2025-12-31"
+  required_columns: ["date", "ticker", "close", "volume"]
+  max_abs_daily_return: 0.25     # validate.py stops above this
+  inference_days: 300            # fetch_prices.py: trading days kept in the inference file
+
+portfolio:
+  target_weights: {SPY: 0.40, EFA: 0.20, IEF: 0.30, GLD: 0.05, BIL: 0.05}
+  actions: [0.0, 0.5, 1.0]       # share of the way back to target
+  first_decision_date: "2007-09-07"   # first Friday after warm-up; train includes 2008
+  current_rule:
+    drift_band: 0.05             # DECISION D1: absolute percentage points
+    quarter_months: [1, 4, 7, 10]   # first Friday of these months
+  reward:
+    penalty_lambda: 1.0          # DECISION D1: x increase in drawdown during the window
+  min_trade: 0.0                 # DECISION D1: none in Stage 2
+
+problem:
+  target_column: "best_action"
+  problem_type: "classification"
+  id_column: "decision_date"
+
+split:                           # DECISION D3: by date; test stays sealed
+  train_end: "2019-12-31"
+  val_end: "2021-12-31"
+  test_end: "2025-12-31"
+  # contract split_data() settings, kept for its test only
+  test_size: 0.2
+  val_size: 0.2
+  random_state: 42
+
+features:
+  return_weeks: [4, 12]
+  vol_days: 20
+
+model:                           # DECISION D5
+  params:
+    max_iter: 1000
+    class_weight: "balanced"
+  random_state: 42
+
+quality_gate:                    # DECISION D2: must match README and TEAM_BRIEF
+  metric_key: "max_drawdown_reduction"
+  comparison: ">="
+  threshold: 0.20
+  split: "validation"
+
+fallback:
+  min_probability: 0.60          # DECISION D5 (README ESTIMATE)
+
+costs:                           # from PR #9; read by src/costs.py
+  aum: 100000000                 # ASSUMPTION: capital in the model portfolio
+  model: flat                    # DECISION D1: README baseline; realistic is Stage 3
   flat:
-    rate: 0.001            # 0.1% of value traded (README)
-  commission:              # IBKR Pro EU retail schedule. ASSUMPTION: a firm this size would negotiate lower
-    rate: 0.0005           # 0.05% of trade value
-    min_fee: 1.25          # per trade, floor
-    cap: 0.01              # per trade, max 1% of trade value
-  slippage:                # ported from Argus AsymmetricVolumeSlippageModel. ASSUMPTIONS
-    entry_bps: 5.0         # buys
-    exit_bps: 10.0         # sells (reductions)
-    impact_factor: 2.0     # bps per sqrt(% of ADV), Almgren-Chriss form
-    adv_window: 20         # trading days for the trailing average daily dollar volume
+    rate: 0.001
+  commission:
+    rate: 0.0005
+    min_fee: 1.25
+    cap: 0.01
+  slippage:
+    entry_bps: 5.0
+    exit_bps: 10.0
+    impact_factor: 2.0
+    adv_window: 20
+
+logging:
+  level: "INFO"
