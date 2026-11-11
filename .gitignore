@@ -43,3 +43,9 @@ models/**
 reports/**
 !reports/
 !reports/README.md
+
+# Testing
+.pytest_tmp/
+
+# Logs (written by src/main.py)
+logs/

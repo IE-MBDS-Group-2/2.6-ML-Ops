@@ -1,0 +1,16 @@
+# .pylintrc  [pylint settings]
+# Same line length as flake8 (see .flake8 and the CI workflow), so both tools agree.
+# Pylint's own default is 100 and it does not read .flake8.
+
+[FORMAT]
+max-line-length=120
+
+[BASIC]
+# Course-contract argument names (X_train, X_eval, X_infer, ...) are fixed by the course.
+good-names=X,X_rest,X_train,X_val,X_test,X_eval,X_infer
+
+[DESIGN]
+# The course contract fixes 6 arguments for split_data and train_model.
+# portfolio.simulate takes 8 (prices, volumes, features, target, policy, start, end, cfg).
+max-args=8
+max-positional-arguments=8
