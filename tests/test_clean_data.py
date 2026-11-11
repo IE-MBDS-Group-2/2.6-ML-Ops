@@ -7,7 +7,7 @@ from src import clean_data, validate
 
 
 def make_raw_prices() -> pd.DataFrame:
-    """Tiny long-format price table: 2 dates x 2 tickers, plus 1 duplicate row, in shuffled order."""
+    """Tiny long price table: 2 dates x 2 tickers, plus 1 exact duplicate row, shuffled."""
     return pd.DataFrame(
         {
             "Date": ["2024-01-03", "2024-01-02", "2024-01-02", "2024-01-03", "2024-01-02"],
@@ -18,10 +18,30 @@ def make_raw_prices() -> pd.DataFrame:
     )
 
 
-def test_unit_clean_dataframe_drops_duplicate_date_ticker_rows():
-    """5 rows with 1 duplicate (2024-01-02, SPY) must give 4 rows."""
+def test_unit_clean_dataframe_drops_exact_duplicate_rows():
+    """5 rows with 1 exact duplicate (2024-01-02, SPY, 100.0, 900) must give 4 rows."""
     result = clean_data.clean_dataframe(make_raw_prices())
     assert len(result) == 4
+
+
+def test_unit_clean_dataframe_keeps_conflicting_rows_for_validate():
+    """Same (date, ticker) but another price (100 vs 999) is no exact duplicate: both stay."""
+    raw = make_raw_prices()
+    raw.loc[4, "Close"] = 999.0
+    result = clean_data.clean_dataframe(raw)
+    spy_day = result[(result["ticker"] == "SPY") & (result["date"] == "2024-01-02")]
+    assert sorted(spy_day["close"]) == [100.0, 999.0]
+
+
+def test_unit_clean_dataframe_standardises_names_types_and_order():
+    """Columns lowercase, date parsed to datetime, rows sorted by date then ticker, index 0..n-1."""
+    result = clean_data.clean_dataframe(make_raw_prices())
+    assert list(result.columns) == ["date", "ticker", "close", "volume"]
+    assert pd.api.types.is_datetime64_any_dtype(result["date"])
+    assert list(zip(result["date"].dt.strftime("%Y-%m-%d"), result["ticker"])) == [
+        ("2024-01-02", "EFA"), ("2024-01-02", "SPY"), ("2024-01-03", "EFA"), ("2024-01-03", "SPY"),
+    ]
+    assert list(result.index) == [0, 1, 2, 3]
 
 
 def test_unit_clean_dataframe_does_not_modify_input():
@@ -36,7 +56,9 @@ def make_clean_long() -> pd.DataFrame:
     """Clean long table: 3 dates, 2 tickers, but EFA has no row on 2024-01-03."""
     return pd.DataFrame(
         {
-            "date": pd.to_datetime(["2024-01-02", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-04"]),
+            "date": pd.to_datetime(
+                ["2024-01-02", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-04"]
+            ),
             "ticker": ["EFA", "SPY", "SPY", "EFA", "SPY"],
             "close": [70.0, 100.0, 101.0, 72.0, 102.0],
         }

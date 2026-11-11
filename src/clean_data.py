@@ -32,9 +32,11 @@ def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> p
     Inputs:  df_raw, one row per (date, ticker); target_column, unused because the price file has no
              target, kept so the signature matches the course contract.
     Outputs: new DataFrame with lowercase column names, a datetime date column, sorted by date then
-             ticker, one row per (date, ticker), and a fresh 0..n-1 index.
-    Why:     later steps rely on consistent names, real dates and a stable order; duplicates would
-             double-count a day.
+             ticker, exact duplicate rows removed, and a fresh 0..n-1 index. Rows that share a
+             (date, ticker) but differ in a value are KEPT: choosing one would be a silent fix, so
+             validate.py rejects them instead.
+    Why:     later steps rely on consistent names, real dates and a stable order; exact duplicates
+             would double-count a day.
     """
     del target_column  # contract parameter, not used for price data
 
@@ -43,8 +45,8 @@ def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None) -> p
     df[DATE_COLUMN] = pd.to_datetime(df[DATE_COLUMN])
 
     n_before = len(df)
-    df = df.drop_duplicates(subset=[DATE_COLUMN, TICKER_COLUMN], keep="first")
-    logger.info("Dropped %d duplicate (date, ticker) rows out of %d", n_before - len(df), n_before)
+    df = df.drop_duplicates()
+    logger.info("Dropped %d exact duplicate rows out of %d", n_before - len(df), n_before)
 
     return df.sort_values([DATE_COLUMN, TICKER_COLUMN]).reset_index(drop=True)
 
