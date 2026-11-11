@@ -116,3 +116,23 @@ def test_integration_clean_output_passes_validate():
     raw = make_valid_long().rename(columns=str.upper)
     raw["DATE"] = raw["DATE"].dt.strftime("%Y-%m-%d")
     assert run_gate(clean_data.clean_dataframe(raw)) is True
+
+
+def test_unit_validate_raises_on_missing_target_column():
+    """In training data the target must be present: name it in the error."""
+    with pytest.raises(ValueError, match="best_action"):
+        validate.validate_dataframe(make_valid_long(), REQUIRED, target_column="best_action")
+
+
+def test_unit_validate_raises_on_empty_target_values():
+    """A label with empty values cannot be trained on: stop and say how many rows."""
+    df = make_valid_long().assign(best_action=1.0)
+    df.loc[0, "best_action"] = None
+    with pytest.raises(ValueError, match="1 rows have no value"):
+        validate.validate_dataframe(df, REQUIRED, target_column="best_action")
+
+
+def test_unit_validate_accepts_complete_target():
+    """A present, complete target passes."""
+    df = make_valid_long().assign(best_action=1.0)
+    assert validate.validate_dataframe(df, REQUIRED, target_column="best_action") is True

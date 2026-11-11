@@ -21,12 +21,12 @@ import logging
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.pipeline import Pipeline
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_PROBLEM_TYPES = ("classification",)
+SUPPORTED_PROBLEM_TYPES = ("classification", "regression")
 
 
 # Subclassing LogisticRegression inherits sklearn's own deep class tree, hence the ancestors waiver.
@@ -61,14 +61,22 @@ def _check_inputs(X_train: pd.DataFrame, y_train: pd.Series, problem_type: str, 
                          "not inside model_params.")
 
 
+def _make_estimator(problem_type: str, params: dict, random_state: int):
+    """The estimator for the problem type: ActionClassifier for classification, Ridge for regression."""
+    if problem_type == "regression":
+        return Ridge(random_state=random_state, **params)
+    return ActionClassifier(random_state=random_state, **params)
+
+
 def train_model(X_train: pd.DataFrame, y_train: pd.Series, preprocessor: ColumnTransformer, problem_type: str,
                 model_params: dict | None = None, random_state: int = 42) -> Pipeline:
     """Course contract: bundle the feature recipe and LogisticRegression into one pipeline and fit it.
 
     Inputs:  X_train, y_train (best_action: 0.0, 0.5, 1.0) from the train split only; preprocessor, the
-             UNFITTED recipe from features.get_feature_preprocessor; problem_type ("classification");
+             UNFITTED recipe from features.get_feature_preprocessor; problem_type ("classification" or "regression");
              model_params from config.yaml model.params (e.g. max_iter, class_weight); random_state, the seed.
-    Outputs: the fitted Pipeline([("preprocess", preprocessor), ("model", LogisticRegression)]).
+    Outputs: the fitted Pipeline([("preprocess", preprocessor), ("model", estimator)]): ActionClassifier
+             (LogisticRegression) for classification, Ridge for regression.
     Why:     the only .fit() in the project, on train rows only, so validation and test stay honest;
              one artifact means what we evaluate is exactly what infer loads.
     Raises:  ValueError for an unsupported problem_type, empty data, X and y of different lengths, or
@@ -76,12 +84,15 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series, preprocessor: ColumnT
     """
     params = dict(model_params or {})
     _check_inputs(X_train, y_train, problem_type, params)
-    counts = y_train.value_counts().sort_index()
-    logger.info("Training on %d rows; class counts %s",
-                len(X_train), ", ".join(f"{label}: {count}" for label, count in counts.items()))
+    if problem_type == "classification":
+        counts = y_train.value_counts().sort_index()
+        logger.info("Training on %d rows; class counts %s",
+                    len(X_train), ", ".join(f"{label}: {count}" for label, count in counts.items()))
+    else:
+        logger.info("Training on %d rows; target mean %.4f", len(X_train), float(y_train.mean()))
     model = Pipeline([
         ("preprocess", preprocessor),
-        ("model", ActionClassifier(random_state=random_state, **params)),
+        ("model", _make_estimator(problem_type, params, random_state)),
     ])
     model.fit(X_train, y_train)
     logger.info("Fitted %s with %d features", type(model.named_steps["model"]).__name__, X_train.shape[1])
