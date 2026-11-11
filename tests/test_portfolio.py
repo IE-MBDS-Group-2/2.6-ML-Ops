@@ -206,9 +206,16 @@ def test_unit_build_decision_table_one_row_per_week_labels_and_last_row_nan():
     weeks = portfolio.decision_dates(close.index, "2024-01-01", "2024-03-22")
     assert table.index.name == "decision_date"
     assert list(table.index) == list(weeks)
-    assert set(table["best_action"].iloc[:-1]) <= {0.0, 0.5, 1.0}
-    assert np.isnan(table["best_action"].iloc[-1])
+    assert set(table["best_action"].iloc[:-2]) <= {0.0, 0.5, 1.0}
     assert "ret_4w_SPY" in table.columns and "w_SPY" in table.columns
+
+
+def test_unit_last_two_decisions_have_no_full_window_so_their_label_is_nan():
+    # The last decision is the last trading day: it never executes, so the one before has no window end either.
+    close, volume = make_prices(periods=60)
+    table = portfolio.build_decision_table(close, volume, pd.DataFrame(index=close.index), TARGET,
+                                           "2024-01-01", "2024-03-22", make_cfg())
+    assert table["best_action"].isna().tolist() == [False] * (len(table) - 2) + [True, True]
 
 
 def test_unit_best_action_tie_goes_to_the_smaller_action():
@@ -218,7 +225,7 @@ def test_unit_best_action_tie_goes_to_the_smaller_action():
     volume = pd.DataFrame(1_000_000.0, index=days, columns=TICKERS)
     table = portfolio.build_decision_table(close, volume, pd.DataFrame(index=days), TARGET,
                                            "2024-01-01", "2024-02-29", make_cfg())
-    assert (table["best_action"].iloc[:-1] == 0.0).all()
+    assert (table["best_action"].iloc[:-2] == 0.0).all()
 
 
 def test_unit_best_action_is_full_rebalance_before_a_crash_in_the_overweight_etf():
@@ -243,6 +250,6 @@ def test_integration_market_features_then_decision_table():
     table = portfolio.build_decision_table(close, volume, market, TARGET, "2024-01-01", "2024-12-31", make_cfg())
     weeks = portfolio.decision_dates(close.index, "2024-01-01", "2024-12-31")
     assert len(table) == len(weeks)
-    assert set(table["best_action"].iloc[:-1]) <= {0.0, 0.5, 1.0}
-    assert np.isnan(table["best_action"].iloc[-1])
+    assert set(table["best_action"].iloc[:-2]) <= {0.0, 0.5, 1.0}
+    assert table["best_action"].iloc[-2:].isna().all()
     assert set(market.columns) <= set(table.columns)
