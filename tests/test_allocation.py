@@ -173,6 +173,11 @@ def test_unit_smart_without_a_model_uses_the_rule():
     assert smart(state_row("2024-05-10", {"SPY": 0.01, "IEF": -0.01})) == 0.0
 
 
+def test_unit_calculated_target_waits_for_benchmarks():
+    with pytest.raises(NotImplementedError, match="#63"):
+        allocation.resolve_target("min_variance", make_cfg(), None)
+
+
 def test_unit_explain_halfway_and_full_without_a_breach():
     cfg = make_cfg(band=5)
     row = state_row("2024-02-09", {"EFA": -0.032, "GLD": 0.032})
