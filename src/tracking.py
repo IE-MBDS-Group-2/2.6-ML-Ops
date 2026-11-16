@@ -16,11 +16,15 @@ Tests     tests/test_tracking.py
 """
 
 import logging
+from pathlib import Path
 
 import pandas as pd
 import wandb
 
 logger = logging.getLogger(__name__)
+
+# W&B's own name for "the newest version". "prod" is never set in code: a person promotes a model in the W&B UI.
+LATEST_ALIAS = "latest"
 
 
 def _login(env: dict[str, str]) -> None:
@@ -103,3 +107,45 @@ def finish_run(run: wandb.Run | None, failed: bool = False) -> None:
     exit_code = 1 if failed else 0
     run.finish(exit_code=exit_code)
     logger.info("W&B run finished with exit code %d", exit_code)
+
+
+def _file_artifact(path: Path, name: str, artifact_type: str, **options: object) -> wandb.Artifact:
+    """Build a W&B artifact that holds one file.
+
+    Inputs:  path, the file to store; name, the artifact's name in W&B; artifact_type, "dataset" or "model";
+             options, extra settings for wandb.Artifact (for example metadata).
+    Outputs: the artifact, ready to be logged to a run.
+    Why:     the dataset and the model are stored the same way; one helper keeps the two functions short.
+    """
+    artifact = wandb.Artifact(name, type=artifact_type, **options)
+    artifact.add_file(str(path))
+    return artifact
+
+
+def log_dataset(run: wandb.Run | None, path: Path, name: str) -> None:
+    """Store the data file the run trained on as a W&B dataset artifact, so every run names its data version.
+
+    Inputs:  run, the W&B run or None; path, the data file (the cleaned prices); name, the artifact's name
+             (tracking.dataset_artifact in config.yaml).
+    Outputs: None. With run=None nothing happens.
+    Why:     W&B keeps one version per distinct file, so two runs on the same data point to the same version (D20).
+    """
+    if run is None:
+        return
+    run.log_artifact(_file_artifact(path, name, "dataset"))
+    logger.info("Logged dataset %s to W&B from %s", name, path)
+
+
+def log_model(run: wandb.Run | None, path: Path, name: str, metadata: dict) -> None:
+    """Register a model file in W&B as a model artifact with the alias "latest".
+
+    Inputs:  run, the W&B run or None; path, the saved model file (.joblib); name, the artifact's name
+             (tracking.model_artifact in config.yaml); metadata, facts stored with it (for example gate results).
+    Outputs: None. With run=None nothing happens.
+    Why:     only called after the quality gate passed (D8); a person then promotes it to "prod" in the W&B UI,
+             and the API downloads that alias.
+    """
+    if run is None:
+        return
+    run.log_artifact(_file_artifact(path, name, "model", metadata=metadata), aliases=[LATEST_ALIAS])
+    logger.info("Logged model %s to W&B from %s with alias %s", name, path, LATEST_ALIAS)
