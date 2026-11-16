@@ -215,3 +215,8 @@ def test_unit_target_fit_raises_on_bad_inputs():
         allocation.target_fit(other, make_cfg(), alternating_returns().drop(columns="GLD"))
     with pytest.raises(ValueError, match="QQQ"):
         allocation.target_fit(other.rename({"BIL": "QQQ"}), make_cfg(), alternating_returns())
+
+
+def test_unit_explain_raises_on_an_unknown_action():
+    with pytest.raises(ValueError, match="0.3"):
+        allocation.explain(state_row("2024-02-09"), 0.3, False, make_cfg())

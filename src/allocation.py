@@ -36,6 +36,8 @@ SAME_WEIGHTS = 1e-9   # weights this close to the policy mix count as the policy
 POINTS = 100          # rebalancing.tolerance_band is in percentage points; today's rule works in fractions
 MONTHS_IN_YEAR = 12
 NEVER = float("inf")  # a band no drift can exceed: the calendar-only method never trades on drift
+DRIFT_DECIMALS = 9    # drifts are compared rounded, so float noise never decides which holding is named
+ACTION_WORDS = {0.0: "No trade", 0.5: "Rebalance halfway", 1.0: "Rebalance fully"}
 
 Policy = Callable[[pd.Series], float]
 
@@ -195,3 +197,50 @@ def resolve_policy(method: str, model: Pipeline | None, target: pd.Series, decis
     logger.info("Rebalancing: %s (%s, band %s)", rule_method, cfg["rebalancing"]["calendar"],
                 rule_cfg["portfolio"]["current_rule"]["drift_band"])
     return rules.make_rule_policy("current", target, decisions, close_wide, rule_cfg)
+
+
+def _furthest(state_row: pd.Series, tickers: list[str]) -> tuple[str, float]:
+    """The holding furthest from target, and its drift as a fraction (positive = above target).
+
+    Inputs:  state_row, with drift_<T> columns; tickers, in config order.
+    Outputs: (ticker, drift). On a tie the first ticker in config order is named.
+    Why:     one holding is enough to explain a rebalance; the worst one is the one the bands react to.
+    """
+    drifts = pd.Series({ticker: float(state_row[f"drift_{ticker}"]) for ticker in tickers})
+    ticker = str(drifts.abs().round(DRIFT_DECIMALS).idxmax())
+    return ticker, float(drifts[ticker])
+
+
+def _detail(action: float, ticker: str, drift: float, band: float) -> str:
+    """The sentence for one action, without the fallback part.
+
+    Inputs:  action, 0.0, 0.5 or 1.0; ticker and drift, from _furthest; band, rebalancing.tolerance_band (points).
+    Outputs: for example "Rebalance fully: SPY is 6.1 points above target, outside the 5-point band."
+    Why:     a portfolio manager reads the action and the one number behind it.
+    """
+    points = abs(drift) * POINTS
+    if action == 0.0:
+        return f"{ACTION_WORDS[action]}: every holding is within {points:.1f} points of target."
+    side = "above" if drift > 0 else "below"
+    outside = f", outside the {band:g}-point band" if points > band else ""
+    return f"{ACTION_WORDS[action]}: {ticker} is {points:.1f} points {side} target{outside}."
+
+
+def explain(state_row: pd.Series, action: float, fallback: bool, cfg: dict) -> str:
+    """One plain sentence that says what to do and why, for the API's reason field.
+
+    Inputs:  state_row, the live state (drift_<T> columns); action, the recommendation (0.0, 0.5 or 1.0);
+             fallback, True when today's rule decided because the model was not confident enough; cfg, the full
+             config (reads data.tickers, rebalancing.tolerance_band and fallback.min_probability).
+    Outputs: the sentence, for example "No trade: every holding is within 2.0 points of target."
+    Why:     every answer comes with a reason a portfolio manager can check against the positions.
+    Raises:  ValueError if the action is not 0.0, 0.5 or 1.0.
+    """
+    if action not in ACTION_WORDS:
+        raise ValueError(f"explain got action {action}; expected one of {sorted(ACTION_WORDS)}.")
+    ticker, drift = _furthest(state_row, cfg["data"]["tickers"])
+    sentence = _detail(action, ticker, drift, float(cfg["rebalancing"]["tolerance_band"]))
+    if not fallback:
+        return sentence
+    confidence = cfg["fallback"]["min_probability"]
+    return f"The model was less than {confidence:.0%} sure, so today's rule decides. {sentence}"
