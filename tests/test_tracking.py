@@ -1,6 +1,5 @@
 """Tests for src/tracking.py: W&B runs, metrics, artifacts and model download, all offline with fakes."""
 
-import os
 from unittest.mock import MagicMock
 
 import pandas as pd
