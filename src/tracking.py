@@ -17,6 +17,7 @@ Tests     tests/test_tracking.py
 
 import logging
 
+import pandas as pd
 import wandb
 
 logger = logging.getLogger(__name__)
@@ -61,3 +62,44 @@ def start_run(cfg: dict, env: dict[str, str], job_type: str = "train") -> wandb.
     )
     logger.info("W&B run started in project %s (mode %s, job type %s)", settings["project"], mode, job_type)
     return run
+
+
+def log_metrics(run: wandb.Run | None, metrics: dict[str, float], prefix: str = "") -> None:
+    """Log a set of metrics to the run, each name with the same prefix (for example "val/" or "test/").
+
+    Inputs:  run, the W&B run or None; metrics, name -> value; prefix, put in front of every name.
+    Outputs: None. With run=None nothing happens.
+    Why:     the same metric names are logged for validation, test and the grid search; the prefix keeps them
+             apart in W&B.
+    """
+    if run is None:
+        return
+    run.log({f"{prefix}{name}": value for name, value in metrics.items()})
+    logger.info("Logged %d metrics to W&B with prefix %r", len(metrics), prefix)
+
+
+def log_table(run: wandb.Run | None, name: str, table: pd.DataFrame) -> None:
+    """Log a DataFrame to the run as a W&B table (for example the predictions).
+
+    Inputs:  run, the W&B run or None; name, the table's name in W&B; table, the rows to log.
+    Outputs: None. With run=None nothing happens.
+    Why:     a table can be filtered and compared between runs in the W&B UI.
+    """
+    if run is None:
+        return
+    run.log({name: wandb.Table(dataframe=table)})
+    logger.info("Logged table %s to W&B: %d rows", name, len(table))
+
+
+def finish_run(run: wandb.Run | None, failed: bool = False) -> None:
+    """Close the run and mark it failed when the pipeline stopped with an error.
+
+    Inputs:  run, the W&B run or None; failed, True when the pipeline raised.
+    Outputs: None. With run=None nothing happens.
+    Why:     a failed run must not look like a finished one in W&B (exit code 1 shows it as failed).
+    """
+    if run is None:
+        return
+    exit_code = 1 if failed else 0
+    run.finish(exit_code=exit_code)
+    logger.info("W&B run finished with exit code %d", exit_code)
