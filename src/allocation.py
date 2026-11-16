@@ -20,17 +20,24 @@ Tests     tests/test_allocation.py
 """
 
 import logging
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
+from sklearn.pipeline import Pipeline
 
-from src import config, features
+from src import config, features, rules
 
 logger = logging.getLogger(__name__)
 
 TARGET_KEY = ("target_weights", "method")
 REBALANCING_KEY = ("rebalancing", "method")
 SAME_WEIGHTS = 1e-9   # weights this close to the policy mix count as the policy mix
+POINTS = 100          # rebalancing.tolerance_band is in percentage points; today's rule works in fractions
+MONTHS_IN_YEAR = 12
+NEVER = float("inf")  # a band no drift can exceed: the calendar-only method never trades on drift
+
+Policy = Callable[[pd.Series], float]
 
 
 def _check_choice(key: tuple[str, str], value: str) -> None:
@@ -114,3 +121,77 @@ def target_fit(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None)
               f"decides. Expected tracking error to the policy weights: {tracking:.1%} a year.")
     logger.info("Target is not the policy mix: fallback to the rule, expected tracking error %.4f", tracking)
     return {"fallback": True, "reason": reason, "expected_tracking_error": tracking}
+
+
+def _calendar_months(calendar: str, cfg: dict) -> list[int]:
+    """The months whose first review rebalances, for a calendar setting.
+
+    Inputs:  calendar, rebalancing.calendar (monthly, quarterly or annually); cfg (reads
+             portfolio.current_rule.quarter_months).
+    Outputs: month numbers, for example [1, 4, 7, 10] for quarterly.
+    Why:     quarterly uses today's quarter months from config, so calendar_and_band with quarterly and 5 is
+             exactly today's rule; annually is the first of those months.
+    """
+    quarter_months = list(cfg["portfolio"]["current_rule"]["quarter_months"])
+    by_calendar = {
+        "monthly": list(range(1, MONTHS_IN_YEAR + 1)),
+        "quarterly": quarter_months,
+        "annually": quarter_months[:1],
+    }
+    return by_calendar[calendar]
+
+
+def _rule_settings(method: str, cfg: dict) -> dict:
+    """Today's rule's two settings (drift band, calendar months) for one of the rule-based methods.
+
+    Inputs:  method, calendar, tolerance_band or calendar_and_band; cfg (reads rebalancing).
+    Outputs: {"drift_band": fraction, "quarter_months": [...]}, the shape of portfolio.current_rule.
+    Why:     all three methods are today's rule with a part switched off: calendar has no band (NEVER),
+             tolerance_band has no calendar months.
+    """
+    settings = cfg["rebalancing"]
+    months = [] if method == "tolerance_band" else _calendar_months(settings["calendar"], cfg)
+    band = NEVER if method == "calendar" else float(settings["tolerance_band"]) / POINTS
+    return {"drift_band": band, "quarter_months": months}
+
+
+def _model_policy(model: Pipeline) -> Policy:
+    """Wrap the fitted model as a policy, exactly as main.py does for the Stage 2 run.
+
+    Inputs:  model, the fitted pipeline (it remembers its feature columns in feature_names_in_).
+    Outputs: policy(state_row) -> the model's action.
+    Why:     smart is our model deciding at each review; reading the columns from the model means a caller
+             cannot pass the wrong list.
+    """
+    columns = list(model.feature_names_in_)
+
+    def policy(state_row: pd.Series) -> float:
+        """Inputs: a state row. Outputs: the model's action. Why: smart rebalancing."""
+        return float(model.predict(state_row[columns].to_frame().T.astype(float))[0])
+
+    return policy
+
+
+def resolve_policy(method: str, model: Pipeline | None, target: pd.Series, decisions: pd.DatetimeIndex,
+                   close_wide: pd.DataFrame, cfg: dict) -> Policy:
+    """The rebalancing method as a policy: a function from a state row to an action in [0, 1].
+
+    Inputs:  method, rebalancing.method; model, the fitted pipeline or None; target, the weights to return to;
+             decisions, the run's decision dates; close_wide (date x ticker); cfg, the full config (reads
+             rebalancing and portfolio.current_rule).
+    Outputs: policy(state_row) -> action, ready for portfolio.simulate or one live state row.
+    Why:     smart is the model (today's rule when there is no model, D8); calendar, tolerance_band and
+             calendar_and_band are today's rule from rules.make_rule_policy with the user's calendar and band.
+    Raises:  ValueError for an unknown method, listing the allowed ones.
+    """
+    _check_choice(REBALANCING_KEY, method)
+    if method == "smart" and model is not None:
+        logger.info("Rebalancing: smart (the trained model decides)")
+        return _model_policy(model)
+    rule_method = "calendar_and_band" if method == "smart" else method
+    if method == "smart":
+        logger.warning("Rebalancing: smart, but no model is loaded, so the calendar-and-band rule decides (D8)")
+    rule_cfg = {**cfg, "portfolio": {**cfg["portfolio"], "current_rule": _rule_settings(rule_method, cfg)}}
+    logger.info("Rebalancing: %s (%s, band %s)", rule_method, cfg["rebalancing"]["calendar"],
+                rule_cfg["portfolio"]["current_rule"]["drift_band"])
+    return rules.make_rule_policy("current", target, decisions, close_wide, rule_cfg)
