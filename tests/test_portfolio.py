@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src import portfolio
+from src import features, portfolio
 
 TICKERS = ["SPY", "EFA", "IEF", "GLD", "BIL"]
 TARGET = pd.Series([0.40, 0.20, 0.30, 0.05, 0.05], index=TICKERS)
@@ -263,3 +263,79 @@ def test_unit_build_decision_table_raises_clear_error_when_a_problem_column_is_n
     with pytest.raises(ValueError, match=f"Config has no problem.{key}"):
         portfolio.build_decision_table(close, volume, pd.DataFrame(index=close.index), TARGET,
                                        "2024-01-01", "2024-03-22", cfg)
+
+
+# ---------- live_state (Stage 3, #59: the state row for one live request) ----------
+
+def live_inputs(periods: int = 120, until: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Synthetic prices from 2 Jan 2024 (cut at `until` if given) and their real market features."""
+    close, volume = make_prices(periods=periods)
+    if until is not None:
+        close, volume = close.loc[:until], volume.loc[:until]
+    market = features.compute_market_features(close, return_weeks=[4, 12], vol_days=20)
+    return close, volume, market
+
+
+def call_live_state(prices: tuple, weights: pd.Series = TARGET, drawdown: float = 0.0,
+                    weeks: int = 0) -> pd.DataFrame:
+    """live_state with the team's target and config; only the client's position inputs vary."""
+    close, volume, market = prices
+    return portfolio.live_state(close, volume, market, weights, drawdown, weeks, TARGET, make_cfg())
+
+
+def test_unit_live_state_known_values_at_target():
+    # 120 business days from 1 Jan 2024 end on Fri 14 Jun 2024: mid-quarter (June is not a quarter month).
+    row = call_live_state(live_inputs())
+    assert len(row) == 1
+    assert all(row[f"drift_{ticker}"].iloc[0] == 0.0 for ticker in TICKERS)
+    assert row["drawdown"].iloc[0] == 0.0
+    assert row["rule_action"].iloc[0] == 0.0
+
+
+def test_unit_live_state_rule_fires_on_quarter_start():
+    # Fri 5 Jul 2024 is the first decision date of July, a quarter month: today's rule rebalances.
+    row = call_live_state(live_inputs(periods=140, until="2024-07-05"))
+    assert row.index[0] == pd.Timestamp("2024-07-05")
+    assert row["rule_action"].iloc[0] == 1.0
+
+
+def test_unit_live_state_rule_fires_on_band_breach():
+    prices = live_inputs()
+    six_points = TARGET + pd.Series([0.06, -0.06, 0.0, 0.0, 0.0], index=TICKERS)
+    four_points = TARGET + pd.Series([0.04, -0.04, 0.0, 0.0, 0.0], index=TICKERS)
+    assert call_live_state(prices, weights=six_points)["rule_action"].iloc[0] == 1.0
+    assert call_live_state(prices, weights=four_points)["rule_action"].iloc[0] == 0.0
+
+
+def test_unit_live_state_passes_the_clients_drawdown_and_weeks_through():
+    row = call_live_state(live_inputs(), drawdown=-0.08, weeks=3)
+    assert row["drawdown"].iloc[0] == pytest.approx(-0.08)
+    assert row["weeks_since_rebalance"].iloc[0] == 3
+
+
+def test_integration_live_state_columns_match_decision_table():
+    close, volume, market = live_inputs()
+    table = portfolio.build_decision_table(close, volume, market, TARGET, "2024-01-01", "2024-06-14", make_cfg())
+    row = call_live_state((close, volume, market))
+    assert list(row.columns) == list(table.drop(columns=["best_action"]).columns)
+
+
+def test_unit_live_state_index_is_the_last_date():
+    close, volume, market = live_inputs()
+    row = call_live_state((close, volume, market))
+    assert list(row.index) == [close.index[-1]]
+    assert row.index.name == "decision_date"
+
+
+@pytest.mark.parametrize("case, overrides, message", [
+    ("wrong tickers", {"weights": TARGET.rename({"BIL": "QQQ"})}, "tickers"),
+    ("weights sum to 0.9", {"weights": TARGET * 0.9}, "sum to 1"),
+    ("positive drawdown", {"drawdown": 0.1}, "drawdown"),
+    ("negative weeks", {"weeks": -1}, "weeks_since_rebalance"),
+    ("too little history", {}, "history"),
+])
+def test_unit_live_state_raises(case, overrides, message):
+    # 30 days cannot fill a 12-week return, so the market features are missing on the last date.
+    prices = live_inputs(periods=30) if case == "too little history" else live_inputs()
+    with pytest.raises(ValueError, match=message):
+        call_live_state(prices, **overrides)
