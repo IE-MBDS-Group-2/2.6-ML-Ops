@@ -1,0 +1,18 @@
+# .dockerignore  [What docker build may see]
+# -------------------------------------------------------------------
+# Purpose   Keep everything out of the build context except the three things the image needs
+# How       Allow-list: ignore everything, then let back in only config.yaml, conda-lock.yml and src/
+# Why       .env (keys), data/, models/, logs/, tests/, notebooks/ and wandb/ can never enter the image,
+#           including files nobody has thought of yet
+
+# Ignore everything
+*
+
+# Let back in only what the image needs
+!config.yaml
+!conda-lock.yml
+!src/
+
+# Inside src/, still drop Python's cache files
+src/**/__pycache__
+src/**/*.pyc
