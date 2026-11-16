@@ -2,8 +2,9 @@
 main.py  [Step 0: ORCHESTRATOR]
 ================================
 Purpose   Run the whole pipeline, in order, with one command: python -m src.main
-Owns      Loading config.yaml once, logging set-up, the date-based split, passing data between steps
-Never     Cleaning, feature or model logic. main.py only CALLS other modules
+Owns      Step order, the date-based split, passing data between steps
+Never     Config parsing (config.py), logging set-up details (logger.py), or any cleaning, feature or model
+          logic. main.py only CALLS other modules
 
 Flow
     config.yaml -> load_data -> clean_data -> validate -> to_wide -> features
@@ -11,7 +12,7 @@ Flow
       -> train -> evaluate + quality gate (validation) -> save model -> infer -> reports/
 
 Why it matters
-- Every setting comes from config.yaml, read once here and passed to modules as arguments
+- Every setting comes from config.yaml, read once (config.py) and passed to modules as arguments
 - Split by DATE before anything is fitted, so no future prices leak into training
 - The test years are never scored here: the split keeps them sealed
 - Handled errors stop the run with exit code 1 and a message saying what to fix
@@ -24,59 +25,17 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
-import yaml
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
-from src import (clean_data, evaluate, features, infer, load_data, portfolio,
-                 train, utils, validate)
+from src import clean_data, config, evaluate, features, infer, load_data
+from src import logger as log_setup
+from src import portfolio, train, utils, validate
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CONFIG_PATH = PROJECT_ROOT / "config.yaml"
-REQUIRED_SECTIONS = (
-    "paths", "data", "portfolio", "problem", "split", "features",
-    "model", "quality_gate", "fallback", "costs", "logging",
-)
-LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
-
-
-def load_config(path: Path) -> dict:
-    """Read config.yaml once and fail fast if a section is missing.
-
-    Inputs:  path, the YAML file (normally CONFIG_PATH).
-    Outputs: the settings as a dictionary.
-    Why:     one source of truth for every setting; a missing section stops the run before any work.
-    Raises:  FileNotFoundError if the file is missing; ValueError if it is not a mapping;
-             KeyError naming every missing section.
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {path}. Run from the repository root.")
-    with path.open(encoding="utf-8") as handle:
-        cfg = yaml.safe_load(handle)
-    if not isinstance(cfg, dict):
-        raise ValueError(f"{path} must contain a YAML mapping of sections.")
-    missing = [section for section in REQUIRED_SECTIONS if section not in cfg]
-    if missing:
-        raise KeyError(f"config.yaml is missing sections: {missing}")
-    return cfg
-
-
-def configure_logging(level: str, log_file: Path) -> None:
-    """Send every module's log lines to the terminal and to one log file.
-
-    Inputs:  level, e.g. "INFO" (from config.yaml); log_file, e.g. logs/pipeline.log.
-    Outputs: None. The root logger gets a console and a file handler with one format.
-    Why:     modules only call logging.getLogger(__name__); where lines go is decided once, here.
-    """
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        level=level.upper(),
-        format=LOG_FORMAT,
-        handlers=[logging.StreamHandler(), logging.FileHandler(log_file, encoding="utf-8")],
-        force=True,
-    )
+PROJECT_ROOT = config.PROJECT_ROOT
+CONFIG_PATH = config.CONFIG_PATH
 
 
 def split_data(X: pd.DataFrame, y: pd.Series, test_size: float, val_size: float,
@@ -177,7 +136,7 @@ def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
 
 def _target_weights(cfg: dict) -> pd.Series:
     """The model portfolio's target weights from config.yaml."""
-    return pd.Series(cfg["portfolio"]["target_weights"], dtype=float)
+    return pd.Series(cfg["target_weights"]["policy"], dtype=float)
 
 
 def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
@@ -294,13 +253,13 @@ def _recommendations(model: Pipeline, columns: list[str], cfg: dict) -> pd.DataF
 def run(cfg: dict) -> dict:
     """The pipeline: data -> decision table -> model -> gate on validation -> recommendations.
 
-    Inputs:  cfg, the full config dictionary (see load_config).
+    Inputs:  cfg, the full config dictionary (see config.load_config).
     Outputs: the metrics dictionary, also written to paths.metrics. Also writes the clean data,
              the model and the predictions, at the paths in config.yaml.
     Why:     one function that calls every module in order; no cleaning or model logic of its own.
     Raises:  FileNotFoundError, OSError, KeyError, ValueError from the steps it calls.
     """
-    paths = {name: PROJECT_ROOT / value for name, value in cfg["paths"].items()}
+    paths = config.resolve_paths(cfg, PROJECT_ROOT)
     # 1. Load, clean and validate the raw prices; keep the clean table.
     clean = _load_prices(paths["raw_data"], cfg)
     utils.save_csv(clean, paths["processed_data"])
@@ -333,8 +292,8 @@ def main() -> None:
     Why:     one command that CI, teammates and the grader all run the same way.
     """
     try:
-        cfg = load_config(CONFIG_PATH)
-        configure_logging(cfg["logging"]["level"], PROJECT_ROOT / cfg["paths"]["log_file"])
+        cfg = config.load_config(CONFIG_PATH)
+        log_setup.setup_logging(cfg["logging"]["level"], PROJECT_ROOT / cfg["paths"]["log_file"])
         logger.info("Config loaded from %s: %d sections", CONFIG_PATH, len(cfg))
         run(cfg)
     except (ValueError, OSError, KeyError) as exc:

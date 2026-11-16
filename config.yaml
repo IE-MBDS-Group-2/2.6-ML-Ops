@@ -10,6 +10,14 @@ paths:
   predictions: "reports/predictions.csv"
   metrics: "reports/metrics.json"
   log_file: "logs/pipeline.log"
+  positions: "data/inference/positions.csv"          # optional: one portfolio or sleeve (DECISION D9)
+  proposed_portfolio: "reports/proposed_portfolio.csv"
+  trades: "reports/trades.csv"
+  benchmarks: "reports/benchmarks.csv"
+  challengers: "reports/challengers.csv"
+  robustness: "reports/robustness.json"
+  selection: "reports/selection.csv"
+  frequency_comparison: "reports/frequency_comparison.csv"
 
 data:
   tickers: ["SPY", "EFA", "IEF", "GLD", "BIL"]
@@ -24,11 +32,21 @@ data:
   max_abs_daily_return: 0.25     # validate.py stops above this
   inference_days: 300            # fetch_prices.py: trading days kept in the inference file
 
+target_weights:                  # DECISION D19: the mix the portfolio is rebalanced towards
+  method: "policy"               # policy = use the weights listed below; or calculate them:
+                                 # min_variance | max_sharpe | mean_variance | risk_parity
+  policy: {SPY: 0.40, EFA: 0.20, IEF: 0.30, GLD: 0.05, BIL: 0.05}   # your own targets; must sum to 1
+
+rebalancing:                     # DECISION D17/D19: how the user wants to rebalance
+  method: "smart"                # smart (our model decides) | calendar | tolerance_band | calendar_and_band
+  review: "weekly"               # daily | weekly | monthly: how often the portfolio is looked at
+  calendar: "quarterly"          # monthly | quarterly | annually (used by the calendar methods)
+  tolerance_band: 5              # percentage points away from target (used by the band methods)
+
 portfolio:
-  target_weights: {SPY: 0.40, EFA: 0.20, IEF: 0.30, GLD: 0.05, BIL: 0.05}
   actions: [0.0, 0.5, 1.0]       # share of the way back to target
   first_decision_date: "2007-09-07"   # first Friday after warm-up; train includes 2008
-  current_rule:
+  current_rule:                  # today's process, the baseline every result is compared with
     drift_band: 0.05             # DECISION D1: absolute percentage points
     quarter_months: [1, 4, 7, 10]   # first Friday of these months
   reward:
@@ -54,6 +72,7 @@ features:
   vol_days: 20
 
 model:                           # DECISION D5
+  type: "classifier"             # DECISION D18: classifier | fitted_q (the reinforcement learning agent)
   params:
     max_iter: 1000
     solver: "lbfgs"
@@ -86,3 +105,59 @@ costs:                           # from PR #9; read by src/costs.py
 
 logging:
   level: "INFO"
+
+# ---------------------------------------------------------------- Stage 3 (DECISIONS D8 to D20)
+positions:                       # column names of the positions file (DECISION D9)
+  ticker_column: "ticker"
+  value_column: "market_value"
+
+tracking:                        # W&B; secrets and WANDB_MODE live in .env (DECISION D13)
+  enabled: true
+  project: "etf-rebalancing"
+  name: "stage3-classifier"
+  group: "stage-3"
+  tags: ["stage-3"]
+  dataset_artifact: "etf-prices"
+  model_artifact: "rebalance-model"
+  log_predictions_table: true
+
+api:                             # DECISION D9
+  min_history_days: 61           # 12-week return (60 trading days) plus one
+  monitoring_batch_size: 20
+
+selection:                       # DECISION D14: train years only; validation and test stay unseen
+  enabled: false
+  first_train_end: "2012-12-31"
+  block: "YE"                    # score one calendar year at a time
+  gap_days: 5                    # trading days dropped between train and score, so labels never overlap
+  grid:
+    C: [0.1, 1.0, 10.0]
+    class_weight: ["balanced", null]
+
+rl:                              # DECISION D18: fitted Q iteration, scikit-learn only
+  enabled: false
+  gamma: 0.95
+  n_iterations: 20
+  n_episodes: 20
+  seeds: [0, 1, 2, 3, 4]         # README: report the median of 5 seeds
+  temperature: 0.005             # ESTIMATE: turns Q values into the score used by the 60% fallback
+  estimator:
+    max_depth: 3
+    max_iter: 100
+    learning_rate: 0.1
+
+benchmarks:                      # DECISION D19: reported, never gated; fitted on the train years only
+  enabled: true
+  methods: ["min_variance", "max_sharpe", "mean_variance", "risk_parity"]
+  risk_aversion: 3.0             # ESTIMATE, mean_variance only
+
+guards:                          # README "Goal and success metrics"; reported, not gated
+  max_return_shortfall: 0.0025   # annual net return no more than 0.25 points below the baseline
+  max_cost_ratio: 2.0            # annual trading cost no more than 2 x the baseline's
+  max_tracking_error: null       # X: set from today's rule on validation by the guards issue
+
+challengers:                     # README simple-rule challengers (team ASSUMPTIONS); never tuned on validation
+  bands: [0.025, 0.015]
+  persistent_drift: {min_assets: 2, band: 0.025, days: 5}
+  asymmetric: {drift_threshold: 0.05, drawdown_threshold: -0.10, step: 0.5, min_wait: 4}   # ESTIMATES
+  equity_tickers: ["SPY", "EFA"]

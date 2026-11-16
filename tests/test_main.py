@@ -1,4 +1,4 @@
-"""Tests for src/main.py: config loading, logging set-up, both splits and the entry point."""
+"""Tests for src/main.py: both splits, the pipeline and the entry point."""
 
 import json
 import logging
@@ -9,9 +9,8 @@ import pandas as pd
 import pytest
 import yaml
 
-from src import main, utils
+from src import config, main, utils
 
-SECTIONS = {section: {} for section in main.REQUIRED_SECTIONS}
 TICKERS = ["SPY", "EFA", "IEF", "GLD", "BIL"]
 
 
@@ -95,33 +94,6 @@ def test_unit_split_by_date_order_and_empty_raise():
         main._split_by_date(table, "2019-12-31", "2030-12-31")
 
 
-def test_unit_load_config_reads_all_sections(tmp_path):
-    """A config with every section loads as a dictionary."""
-    cfg = main.load_config(_write_config(tmp_path / "config.yaml", SECTIONS))
-    assert set(cfg) == set(main.REQUIRED_SECTIONS)
-
-
-def test_unit_load_config_errors(tmp_path):
-    """Missing file, a non-mapping file and a missing section each raise a clear error."""
-    with pytest.raises(FileNotFoundError, match="Config file not found"):
-        main.load_config(tmp_path / "absent.yaml")
-    with pytest.raises(ValueError, match="YAML mapping"):
-        main.load_config(_write_config(tmp_path / "list.yaml", ["not", "a", "mapping"]))
-    partial = {k: v for k, v in SECTIONS.items() if k != "costs"}
-    with pytest.raises(KeyError, match="costs"):
-        main.load_config(_write_config(tmp_path / "partial.yaml", partial))
-
-
-def test_unit_configure_logging_writes_file(tmp_path):
-    """Log lines reach the configured file, creating its folder."""
-    log_file = tmp_path / "logs" / "pipeline.log"
-    main.configure_logging("info", log_file)
-    logging.getLogger("src.test").info("hello %s", "log")
-    for handler in logging.getLogger().handlers:
-        handler.flush()
-    assert "hello log" in log_file.read_text(encoding="utf-8")
-
-
 def test_unit_main_exits_1_on_missing_config(tmp_path, monkeypatch):
     """A missing config stops the run with exit code 1."""
     monkeypatch.setattr(main, "CONFIG_PATH", tmp_path / "absent.yaml")
@@ -154,7 +126,7 @@ def _pipeline_setup(tmp_path: Path, monkeypatch, prices: pd.DataFrame | None = N
     prices.to_csv(tmp_path / "data" / "raw" / "prices.csv", index=False)
     recent = prices[prices["date"].isin(days[-300:])]
     recent.to_csv(tmp_path / "data" / "inference" / "prices_latest.csv", index=False)
-    cfg = main.load_config(main.CONFIG_PATH)
+    cfg = config.load_config(main.CONFIG_PATH)
     cfg["data"]["end"] = "2023-12-29"
     cfg["portfolio"]["first_decision_date"] = "2020-04-10"
     cfg["split"].update(train_end="2021-12-31", val_end="2022-12-31", test_end="2023-12-29")
@@ -241,5 +213,5 @@ def test_unit_validation_gate_helper_reports_the_threshold(caplog):
 
 def test_integration_repo_config_has_every_section():
     """The committed config.yaml loads with every required section."""
-    cfg = main.load_config(main.CONFIG_PATH)
+    cfg = config.load_config(main.CONFIG_PATH)
     assert cfg["quality_gate"]["metric_key"] == "max_drawdown_reduction"

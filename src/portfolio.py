@@ -158,10 +158,10 @@ def _check_target(close_wide: pd.DataFrame, target: pd.Series) -> list[str]:
     """Fail fast if the target weights do not fit the price table; return the tickers in price order."""
     if set(target.index) != set(close_wide.columns):
         raise ValueError(f"target tickers {sorted(target.index)} do not match the price columns "
-                         f"{sorted(close_wide.columns)}. Check portfolio.target_weights in config.yaml.")
+                         f"{sorted(close_wide.columns)}. Check target_weights.policy in config.yaml.")
     if abs(float(target.sum()) - 1.0) > _SUM_TOLERANCE:
         raise ValueError(f"target weights must sum to 1, got {float(target.sum()):.6f}. "
-                         "Check portfolio.target_weights in config.yaml.")
+                         "Check target_weights.policy in config.yaml.")
     return list(close_wide.columns)
 
 
