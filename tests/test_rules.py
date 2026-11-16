@@ -95,6 +95,11 @@ def test_unit_persistent_drift_needs_every_day():
     assert policy_for("persistent_drift", close)(drifted) == 0.0
 
 
+def test_unit_persistent_drift_does_not_fire_with_fewer_days_of_prices_than_it_needs():
+    close, _ = flat_prices("2024-01-10", "2024-01-12")  # 3 trading days, the rule needs 5
+    assert policy_for("persistent_drift", close)(state_row("2024-01-12", {"SPY": 0.03, "IEF": -0.03})) == 0.0
+
+
 def test_unit_persistent_drift_needs_at_least_two_assets():
     close, _ = flat_prices("2024-01-01", "2024-01-12")
     one_asset = state_row("2024-01-12", {"SPY": 0.03, "EFA": -0.01, "IEF": -0.02})
