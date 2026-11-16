@@ -23,6 +23,14 @@ dependencies:
   - scikit-learn
   - joblib
   - pyyaml
+  - python-dotenv
+  - scipy
+  # stage 3: tracking and serving
+  - wandb
+  - fastapi
+  - uvicorn
+  - pydantic
+  - httpx               # FastAPI's test client
   # dev tools (check code, not needed to run it)
   - pytest
   - pytest-cov
@@ -31,6 +39,7 @@ dependencies:
   - radon
   - black
   - isort
+  - conda-lock          # writes conda-lock.yml for CI and Docker (stage 3)
   - pip
   - pip:
       - detect-secrets

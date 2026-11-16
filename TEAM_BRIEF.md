@@ -16,7 +16,7 @@ README follow-ups: Stage 2 label and gate wording (D0, D2) -> Ricardo A.; snapsh
 features.py signature: `get_feature_preprocessor(numeric_columns)`; `compute_market_features(close_wide, return_weeks=[4, 12], vol_days=20)`
 Agreed extra parameters: `validate_dataframe(..., tickers=None, max_abs_daily_return=None, price_columns=None)`; `clean_dataframe(..., date_column=None, sort_by=None)`; `clean_data.to_wide(df, value_column, tickers, date_column, ticker_column)`. Column names are never written in the code: `main.py` passes them from `data.columns` in `config.yaml`; `infer.apply_fallback(preds, rule_actions, missing_input, min_probability)` (the value comes from `fallback.min_probability`)
 utils.py helpers: load_csv, save_csv, save_model, load_model, save_json
-Environment: pandas, numpy, scikit-learn, joblib, pyyaml, yfinance (fetch script only), pytest, pytest-cov, flake8, pylint, radon, black, isort, detect-secrets
+Environment: pandas, numpy, scikit-learn, joblib, pyyaml, python-dotenv, scipy, wandb, fastapi, uvicorn, pydantic, httpx, conda-lock, yfinance (fetch script only), pytest, pytest-cov, flake8, pylint, radon, black, isort, detect-secrets
 Data snapshot: `data/raw/prices.csv` (made by `scripts/fetch_prices.py`), shared directly with the team (WhatsApp) by Ricardo A., not committed to Git (decision D4; Yahoo's API is for personal use only; how the professor receives it is to be confirmed with the professor). SHA-256: 3ada61c6a3cc037e74537f9fa8a739eb2c0c67cc866e95eeb039fad7bf0c6c71 (4,679 trading days per ticker, 2007-05-30 to 2025-12-31, downloaded 11 Nov 2026)
 Decisions:
 - Stage 2 model is a classifier of the best next-week action; the RL agent is Stage 3 (D0)
@@ -39,6 +39,51 @@ Owners (team):
 - infer -> Raja Akel (@raja-akel), branch feature/infer
 - costs -> Miguel Palanca (@Smiggus), PR #9
 - main -> Miguel Palanca (@Smiggus), branch feature/main
+
+## Stage 3 (decisions D8 to D21, agreed 16 Nov 2026)
+
+Milestone "Stage 3, CI/CD and live service", presentation Thu 19 Nov. Issues #55 to #79; specs and acceptance tests in
+`docs/MODULE_SPECS.md` (Stage 3 section). The business case in README section 1 is not rewritten: Stage 3 delivers
+what it commits to.
+
+Product: the user sends a positions file (one portfolio or sleeve) and gets a recommendation, a proposed portfolio,
+a trades list and one plain sentence saying why.
+
+Settings a user chooses (all checked at start-up from `config.ALLOWED_VALUES`):
+- `target_weights.method`: `policy` (the fund's own mix in `target_weights.policy`, the default) or calculated:
+  `min_variance`, `max_sharpe`, `mean_variance`, `risk_parity`
+- `rebalancing.method`: `smart` (our model or RL agent decides at each review, the default), `calendar`,
+  `tolerance_band`, `calendar_and_band` (today's process with `quarterly` and `5`)
+- `rebalancing.review`: `daily`, `weekly` (default), `monthly`; `rebalancing.calendar`; `rebalancing.tolerance_band`
+  (percentage points from target)
+- We never call this "tactical allocation": the tool only decides how to return to the targets.
+
+Decisions:
+- A model that fails the gate is not saved or registered; the API then serves today's rule and says so (D8)
+- API contract: positions, drawdown, weeks since rebalance and 61 or more days of prices in; recommendation,
+  reason, proposed portfolio and trades out (D9)
+- CI runs the pipeline on synthetic prices from `scripts/make_sample_prices.py`; no secrets in CI (D10)
+- Render hosts the API, deployed by GitHub Release; the API loads the W&B model alias `prod` (D11, D12)
+- W&B team (entity) `ie-mbds-group-2`, project `etf-rebalancing`; everyone uses their own API key in `.env`;
+  tracking is optional and off in tests and CI (D13)
+- Scope tiers: Must = the CI/CD chain plus the README's commitments (RL agent, rule challengers, benchmarks,
+  guards and release decision, robustness checks); Should = positions and trades, review frequency, choices (D14)
+- Release `v1.1.0` (D15); dates: build Tue 17, freeze Wed 18 14:00, release Wed evening (D16)
+- RL agent: fitted Q iteration with scikit-learn, same gate as the classifier, median of 5 seeds (D18)
+- Benchmarks reported, never gated; data versioned as a W&B dataset artifact (D19, D20)
+- Everyone builds their own issues against the acceptance tests in their walkthrough; every PR is reviewed (D21)
+
+Secrets and switches (`.env`, never in Git): `WANDB_API_KEY`, `WANDB_ENTITY`, `WANDB_MODE`, `MODEL_SOURCE`,
+`WANDB_MODEL_ALIAS`, `APP_VERSION`.
+
+| Stage 3 role | Owner | Issues |
+|---|---|---|
+| Coordinator, wiring and RL | Miguel Palanca (@Smiggus) | #55 decisions, #56 setup, #62 RL agent, #71 main wiring, #76 deploy, #78 release |
+| Tracking, containers, CI and allocation choices | Tate Bothner (@tatebothner) | #58 tracking, #61 Docker, #69 CI, #74 choices |
+| API, smoke test and monitoring | Raja Akel (@raja-akel) | #67 API, #68 smoke test, #77 monitoring |
+| Live state, guards, rules and frequency | Riccardo Bellini (@riccbell) | #59 live_state, #64 guards, #66 rule challengers, #72 review frequency |
+| Model selection, benchmarks and robustness | Farah (@faalnuseiratie) | #60 walk-forward, #63 benchmarks, #70 grid search, #73 robustness |
+| Data, trades and story | Ricardo Arciniegas (@rarciniegascueva) | #57 sample prices, #65 trades, #75 model card, #79 deck |
 
 ## Roles and contributions
 
