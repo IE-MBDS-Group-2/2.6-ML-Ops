@@ -21,14 +21,16 @@ Tests     tests/test_allocation.py
 
 import logging
 
+import numpy as np
 import pandas as pd
 
-from src import config
+from src import config, features
 
 logger = logging.getLogger(__name__)
 
 TARGET_KEY = ("target_weights", "method")
 REBALANCING_KEY = ("rebalancing", "method")
+SAME_WEIGHTS = 1e-9   # weights this close to the policy mix count as the policy mix
 
 
 def _check_choice(key: tuple[str, str], value: str) -> None:
@@ -64,3 +66,51 @@ def resolve_target(method: str, cfg: dict, train_returns: pd.DataFrame | None) -
     target = pd.Series(cfg["target_weights"]["policy"], dtype=float).reindex(tickers)
     logger.info("Target weights: %s (%d tickers)", method, len(target))
     return target
+
+
+def _check_fit_inputs(target: pd.Series, tickers: list[str], train_returns: pd.DataFrame | None) -> None:
+    """Raise if the target or the train returns do not cover exactly the configured tickers.
+
+    Inputs:  target weights; tickers, data.tickers from config; train_returns, daily returns or None.
+    Outputs: None.
+    Why:     a missing ticker would silently drop out of the covariance and understate the tracking error.
+    Raises:  ValueError naming what is missing or extra.
+    """
+    if sorted(target.index) != sorted(tickers):
+        raise ValueError(f"The target covers {sorted(target.index)} but data.tickers is {sorted(tickers)}. "
+                         "Give one weight for every configured ticker, and no others.")
+    if train_returns is None:
+        raise ValueError("target_fit needs train_returns (daily returns of the train years) to estimate the "
+                         "tracking error of a target that is not the policy mix.")
+    missing = [ticker for ticker in tickers if ticker not in train_returns.columns]
+    if missing:
+        raise ValueError(f"train_returns has no column for {missing}. Pass the daily returns of every ticker.")
+
+
+def target_fit(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None) -> dict:
+    """Say whether the model can serve this target, and how far the target is from the approved policy mix.
+
+    Inputs:  target, the weights in use (from resolve_target); cfg, the full config (reads data.tickers and
+             target_weights.policy); train_returns, daily returns of the train years (not needed for the
+             policy mix itself).
+    Outputs: {"fallback": bool, "reason": str, "expected_tracking_error": float}. The policy mix gives
+             False, "" and 0.0. Any other target gives True, a reason, and the ex-ante annual tracking error
+             sqrt((w - w_policy)' S (w - w_policy) x trading days), S the covariance of the daily returns.
+    Why:     the model is trained for the policy mix, so another target falls back to the calendar-and-band
+             rule; and a different target changes the mandate the Investment Committee approved, so the size of
+             that change is always reported. Ex-ante, because one live request has no path to measure.
+    Raises:  ValueError if the target or the returns do not cover exactly the configured tickers, or the
+             returns are missing for a target that is not the policy mix.
+    """
+    tickers = cfg["data"]["tickers"]
+    policy = pd.Series(cfg["target_weights"]["policy"], dtype=float).reindex(tickers)
+    if sorted(target.index) == sorted(tickers) and np.allclose(target.reindex(tickers), policy, atol=SAME_WEIGHTS):
+        return {"fallback": False, "reason": "", "expected_tracking_error": 0.0}
+    _check_fit_inputs(target, tickers, train_returns)
+    difference = (target.reindex(tickers) - policy).to_numpy()
+    covariance = train_returns[tickers].cov().to_numpy()
+    tracking = float(np.sqrt(difference @ covariance @ difference * features.TRADING_DAYS_PER_YEAR))
+    reason = ("The model was trained for the policy weights, so with this target the calendar-and-band rule "
+              f"decides. Expected tracking error to the policy weights: {tracking:.1%} a year.")
+    logger.info("Target is not the policy mix: fallback to the rule, expected tracking error %.4f", tracking)
+    return {"fallback": True, "reason": reason, "expected_tracking_error": tracking}

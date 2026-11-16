@@ -134,14 +134,14 @@ def test_unit_explain_three_known_states():
     assert fallback.endswith("No trade: every holding is within 2.0 points of target.")
 
 
-@pytest.mark.skip(reason="Awaiting #63 (benchmarks.fit_weights) and the fallback contract (asked Miguel)")
+@pytest.mark.skip(reason="Awaiting #63 (benchmarks.fit_weights) in dev")
 def test_unit_calculated_target_falls_back_to_the_rule():
     returns = make_prices(periods=250)[0].pct_change().dropna()
     target = allocation.resolve_target("min_variance", make_cfg(), returns)
     fit = allocation.target_fit(target, make_cfg(), returns)
     assert fit["fallback"] is True
     assert fit["reason"]
-    assert fit["tracking_error"] >= 0.0
+    assert fit["expected_tracking_error"] >= 0.0
 
 
 # ---------- extra cases the table does not cover ----------
@@ -183,3 +183,35 @@ def test_unit_explain_halfway_and_full_without_a_breach():
     row = state_row("2024-02-09", {"EFA": -0.032, "GLD": 0.032})
     assert allocation.explain(row, 0.5, False, cfg) == "Rebalance halfway: EFA is 3.2 points below target."
     assert allocation.explain(row, 1.0, False, cfg) == "Rebalance fully: EFA is 3.2 points below target."
+
+
+def alternating_returns(days: int = 100) -> pd.DataFrame:
+    """Daily returns where only SPY moves, +1% then -1%, so its variance is known exactly."""
+    returns = pd.DataFrame(0.0, index=pd.bdate_range("2015-01-01", periods=days), columns=TICKERS)
+    returns["SPY"] = [0.01, -0.01] * (days // 2)
+    return returns
+
+
+def test_unit_target_fit_policy_target_has_no_fallback():
+    fit = allocation.target_fit(TARGET, make_cfg(), None)
+    assert fit == {"fallback": False, "reason": "", "expected_tracking_error": 0.0}
+
+
+def test_unit_target_fit_other_target_falls_back_with_known_tracking_error():
+    other = TARGET + pd.Series({"SPY": 0.10, "IEF": -0.10}).reindex(TICKERS, fill_value=0.0)
+    fit = allocation.target_fit(other, make_cfg(), alternating_returns(100))
+    # Only SPY varies: variance 0.0001 x 100 / 99; the weight difference on SPY is 0.10; 252 trading days.
+    expected = 0.10 * np.sqrt(0.0001 * 100 / 99 * 252)
+    assert fit["fallback"] is True
+    assert "calendar-and-band" in fit["reason"]
+    assert fit["expected_tracking_error"] == pytest.approx(expected, abs=1e-12)
+
+
+def test_unit_target_fit_raises_on_bad_inputs():
+    other = TARGET + pd.Series({"SPY": 0.10, "IEF": -0.10}).reindex(TICKERS, fill_value=0.0)
+    with pytest.raises(ValueError, match="train_returns"):
+        allocation.target_fit(other, make_cfg(), None)
+    with pytest.raises(ValueError, match="GLD"):
+        allocation.target_fit(other, make_cfg(), alternating_returns().drop(columns="GLD"))
+    with pytest.raises(ValueError, match="QQQ"):
+        allocation.target_fit(other.rename({"BIL": "QQQ"}), make_cfg(), alternating_returns())
