@@ -176,3 +176,96 @@ def test_unit_evaluate_model_without_predict_raises_type_error():
     """An object with no predict method is not a model: fail with a TypeError that says so."""
     with pytest.raises(TypeError, match="predict"):
         evaluate.evaluate_model(object(), pd.DataFrame({"x": [0.0]}), pd.Series([1.0]), "classification")
+
+
+# ---------------------------------------------------------------- guards and the release decision (Stage 3, #64)
+
+LIMITS = {"max_return_shortfall": 0.0025, "max_cost_ratio": 2.0, "max_tracking_error": 0.02}
+
+
+def metrics(annual_return: float = 0.05, annual_trading_cost: float = 0.001, tracking_error: float = 0.01) -> dict:
+    """The metric keys guard_report reads (portfolio_metrics plus tracking_error), with easy defaults."""
+    return {"annual_return": annual_return, "annual_trading_cost": annual_trading_cost,
+            "tracking_error": tracking_error}
+
+
+def test_unit_tracking_error_is_zero_for_identical_paths():
+    values = pd.Series([1.0, 1.02, 0.99, 1.05, 1.04])
+    assert evaluate.tracking_error(values, values.copy(), 52) == 0.0
+
+
+def test_unit_tracking_error_known_value():
+    """Target flat, portfolio +1% then -1% each week: differences alternate +0.01 / -0.01."""
+    differences = np.array([0.01, -0.01] * 4)
+    portfolio = pd.Series(np.cumprod(np.r_[1.0, 1 + differences]))
+    target = pd.Series(np.ones(len(portfolio)))
+    expected = np.std(differences, ddof=1) * np.sqrt(52)
+    assert evaluate.tracking_error(portfolio, target, 52) == pytest.approx(expected, abs=1e-6)
+
+
+def test_unit_each_guard_passes_and_fails_at_its_limit():
+    baseline = metrics(annual_return=0.05, annual_trading_cost=0.001)
+    at_limit = evaluate.guard_report(metrics(annual_return=0.0475, annual_trading_cost=0.002, tracking_error=0.02),
+                                     baseline, LIMITS)
+    beyond = evaluate.guard_report(metrics(annual_return=0.0474, annual_trading_cost=0.00201,
+                                           tracking_error=0.0201), baseline, LIMITS)
+    for name in ("return_shortfall", "cost_ratio", "tracking_error"):
+        assert at_limit[name]["passed"] is True, name
+        assert beyond[name]["passed"] is False, name
+
+
+def test_unit_guard_report_shape():
+    report = evaluate.guard_report(metrics(annual_return=0.045, annual_trading_cost=0.003), metrics(), LIMITS)
+    assert set(report) == {"return_shortfall", "cost_ratio", "tracking_error"}
+    for entry in report.values():
+        assert set(entry) == {"value", "limit", "passed"}
+    assert report["return_shortfall"] == {"value": pytest.approx(0.005), "limit": 0.0025, "passed": False}
+    assert report["cost_ratio"]["value"] == pytest.approx(3.0)
+
+
+def test_unit_cost_ratio_when_the_baseline_trades_nothing():
+    """No baseline cost: an agent that also trades nothing passes; any cost at all fails."""
+    baseline = metrics(annual_trading_cost=0.0)
+    assert evaluate.guard_report(metrics(annual_trading_cost=0.0), baseline, LIMITS)["cost_ratio"]["passed"] is True
+    assert evaluate.guard_report(metrics(annual_trading_cost=1e-6), baseline, LIMITS)["cost_ratio"]["passed"] is False
+
+
+def test_unit_release_decision_lists_every_failed_reason():
+    report = evaluate.guard_report(metrics(annual_return=0.04, annual_trading_cost=0.005), metrics(), LIMITS)
+    decision = evaluate.release_decision(True, report)
+    assert decision["release"] is False
+    assert len(decision["reasons"]) == 2
+    assert any("return_shortfall" in reason for reason in decision["reasons"])
+    assert any("cost_ratio" in reason for reason in decision["reasons"])
+    all_passed = evaluate.release_decision(True, evaluate.guard_report(metrics(), metrics(), LIMITS))
+    assert all_passed == {"release": True, "reasons": []}
+
+
+def test_unit_release_decision_never_releases_a_failed_gate():
+    decision = evaluate.release_decision(False, evaluate.guard_report(metrics(), metrics(), LIMITS))
+    assert decision["release"] is False
+    assert len(decision["reasons"]) == 1 and "gate" in decision["reasons"][0]
+
+
+def test_unit_release_decision_accepts_an_extra_guard_entry():
+    """#66 adds the selected simple rule as one more entry in the same shape; it must count like the others."""
+    guards = evaluate.guard_report(metrics(), metrics(), LIMITS)
+    guards["challenger"] = {"value": -0.15, "limit": -0.18, "passed": False}
+    decision = evaluate.release_decision(True, guards)
+    assert decision["release"] is False and "challenger" in decision["reasons"][0]
+
+
+@pytest.mark.parametrize("call, message", [
+    (lambda: evaluate.tracking_error(pd.Series([1.0, 1.1, 1.2]), pd.Series([1.0, 1.1]), 52), "same length"),
+    (lambda: evaluate.tracking_error(pd.Series([], dtype=float), pd.Series([], dtype=float), 52), "at least 2"),
+    (lambda: evaluate.guard_report(metrics(), metrics(), {"max_return_shortfall": 0.0025, "max_cost_ratio": 2.0}),
+     "max_tracking_error"),
+    (lambda: evaluate.guard_report(metrics(), metrics(), {**LIMITS, "max_tracking_error": None}),
+     "max_tracking_error"),
+    (lambda: evaluate.guard_report({"annual_return": 0.05}, metrics(), LIMITS), "annual_trading_cost"),
+    (lambda: evaluate.release_decision(True, {"cost_ratio": {"value": 1.0, "limit": 2.0}}), "passed"),
+], ids=["different lengths", "empty series", "missing limit", "limit not set (null)", "missing metric",
+        "malformed guard entry"])
+def test_unit_guards_raise(call, message):
+    with pytest.raises(ValueError, match=message):
+        call()

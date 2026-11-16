@@ -31,12 +31,12 @@ Move the balanced portfolio's max drawdown from the baseline by a reduction set 
 | ML metric | `max_drawdown_reduction` (higher is better): 1 - agent max drawdown / baseline max drawdown, both as losses, so 0.20 means a 20% smaller worst loss. Quality gate, measured on validation 2020 to 2021 against today's rule | 0 (today's rule) | `>=` 0.20 |
 | Guard | annual net return | To be measured | No more than 0.25 percentage points below baseline |
 | Guard | annual trading cost | To be measured | No more than 2 x baseline |
-| Guard | `tracking_error` to target weights (annualised) | To be measured | No more than X, set from the baseline on 2020 to 2021 |
+| Guard | `tracking_error` to target weights (annualised) | Today's rule: 0.0059 (validation 2020 to 2021) | No more than X = 0.012 (2 x the baseline on 2020 to 2021) |
 | Challenger | `max_drawdown` vs selected simple rule | To be measured | Smaller than the selected rule's |
 
 Stage 2: `main.py` checks only the quality gate (`max_drawdown_reduction >= 0.20` on validation 2020-2021); guards are reported, not gated. The release decision on 2022-2025, including the guards, runs once, in Stage 3.
 
-Do not release if, on 2022 to 2025, any of these holds: max drawdown misses the KPI target; annual net return trails the baseline by more than 0.25 percentage points; annual trading cost exceeds 2 x the baseline's; tracking error exceeds X; or max drawdown is not smaller than the selected simple rule's. Then recommend the selected simple rule if it passes the gate against the baseline, otherwise keep the current process.
+Do not release if, on 2022 to 2025, any of these holds: max drawdown misses the KPI target; annual net return trails the baseline by more than 0.25 percentage points; annual trading cost exceeds 2 x the baseline's; tracking error exceeds X (0.012); or max drawdown is not smaller than the selected simple rule's. Then recommend the selected simple rule if it passes the gate against the baseline, otherwise keep the current process.
 
 Reported, not gated: Sharpe ratio (headline), Sortino ratio, volatility, CVaR (expected shortfall) at 95%, turnover, tracking error. Calmar ratio may be shown for reference.
 
@@ -95,7 +95,7 @@ Scales to (ideas, not findings): the firm's conservative and growth model portfo
 
 ### Open gaps
 1. Baseline max drawdown, return, trading cost and tracking error are To be measured over 2007 to 2021 (feasibility check and challenger selection) and 2022 to 2025, before any model is trained.
-2. Define `tracking_error` in this README and in `config.yaml` (proposed: annualised standard deviation of the difference between portfolio and target-portfolio weekly returns) and set X from the baseline on 2020 to 2021.
+2. Closed (#64): `tracking_error` is the annualised standard deviation of the difference between portfolio and target-portfolio weekly returns (`evaluate.tracking_error`). X = 0.012 in `config.yaml` (`guards.max_tracking_error`): 2 x today's rule on 2020 to 2021 (0.0059), so never rebalancing (0.0127) fails the guard.
 3. Not stated: which weights each action moves toward target (Friday or Monday pre-trade), and which weights the Friday cost estimate uses.
 4. Not stated: starting weights on the first decision date and at the start of 2022, and the scope of the "every day in exactly one window" test.
 5. `config.yaml` needs fixed meanings for: "±5%" and "±2.5" (percentage points proposed), the quarterly date, daily weights for the persistent rule, simple or compounded weekly reward, the drawdown penalty reference, and a minimum trade size (Finizens uses one).

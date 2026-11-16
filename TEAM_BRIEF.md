@@ -72,6 +72,8 @@ Decisions:
 - RL agent: fitted Q iteration with scikit-learn, same gate as the classifier, median of 5 seeds (D18)
 - Benchmarks reported, never gated; data versioned as a W&B dataset artifact (D19, D20)
 - Everyone builds their own issues against the acceptance tests in their walkthrough; every PR is reviewed (D21)
+- Tracking-error guard X = 0.012 (`guards.max_tracking_error`): 2 x today's rule on validation 2020-21 (0.0059),
+  like the 2 x cost guard; never rebalancing (0.0127) fails it. Agreed with Miguel (#64)
 
 Secrets and switches (`.env`, never in Git): `WANDB_API_KEY`, `WANDB_ENTITY`, `WANDB_MODE`, `MODEL_SOURCE`,
 `WANDB_MODEL_ALIAS`, `APP_VERSION`.
