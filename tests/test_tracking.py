@@ -81,6 +81,14 @@ def test_unit_start_run_passes_project_entity_and_config(monkeypatch):
     assert run is fake_wandb.init.return_value
 
 
+def test_unit_start_run_logs_in_with_the_key_from_env(monkeypatch):
+    fake_wandb = _fake_wandb(monkeypatch)
+    placeholder = "not-a-real-value"
+    env = {**_env("offline"), "WANDB_API_KEY": placeholder}
+    tracking.start_run(_cfg(), env)
+    fake_wandb.login.assert_called_once_with(key=placeholder)
+
+
 def test_unit_log_metrics_adds_the_prefix():
     run = MagicMock()
     tracking.log_metrics(run, {"accuracy": 0.5}, prefix="val/")
