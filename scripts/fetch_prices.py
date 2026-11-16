@@ -59,18 +59,33 @@ def read_settings(config_path: Path) -> dict:
     settings = {}
     problems = []
     for section, keys in (("data", DATA_KEYS), ("paths", PATH_KEYS)):
-        values = config.get(section)
-        if not isinstance(values, dict):
-            problems.append(f"no '{section}' section (needs {', '.join(keys)})")
-            continue
-        missing = [key for key in keys if key not in values]
-        if missing:
-            problems.append(f"'{section}' is missing {', '.join(missing)}")
-        settings.update({key: values[key] for key in keys if key in values})
+        found, problem = _section_settings(config.get(section), section, keys)
+        settings.update(found)
+        if problem:
+            problems.append(problem)
     if problems:
         raise ValueError(f"Config {config_path} is incomplete: " + "; ".join(problems))
     logger.info("Read settings from %s", config_path)
     return settings
+
+
+def _section_settings(values: object, section: str, keys: tuple) -> tuple[dict, str]:
+    """Pick the keys this script needs out of one config section, and say what is missing.
+
+    Inputs:
+        values: the section as read from the config (anything; a missing section is None).
+        section: its name, for the message.
+        keys: the keys the script needs from it.
+    Outputs:
+        (the keys that were found, a problem message or "" when the section is complete).
+    Why:
+        read_settings reports every gap in one error, so the user fixes the config in one go.
+    """
+    if not isinstance(values, dict):
+        return {}, f"no '{section}' section (needs {', '.join(keys)})"
+    missing = [key for key in keys if key not in values]
+    problem = f"'{section}' is missing {', '.join(missing)}" if missing else ""
+    return {key: values[key] for key in keys if key in values}, problem
 
 
 def download_prices(tickers: list, start_date: str, end_date: str) -> pd.DataFrame:
