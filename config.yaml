@@ -154,7 +154,7 @@ benchmarks:                      # DECISION D19: reported, never gated; fitted o
 guards:                          # README "Goal and success metrics"; reported, not gated
   max_return_shortfall: 0.0025   # annual net return no more than 0.25 points below the baseline
   max_cost_ratio: 2.0            # annual trading cost no more than 2 x the baseline's
-  max_tracking_error: null       # X: set from today's rule on validation by the guards issue
+  max_tracking_error: 0.012      # X = 2 x today's rule on validation 2020-21 (0.0059); agreed with Miguel (#64)
 
 challengers:                     # README simple-rule challengers (team ASSUMPTIONS); never tuned on validation
   bands: [0.025, 0.015]
