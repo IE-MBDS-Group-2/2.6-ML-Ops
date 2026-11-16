@@ -222,3 +222,29 @@ def test_unit_target_fit_raises_on_bad_inputs():
 def test_unit_explain_raises_on_an_unknown_action():
     with pytest.raises(ValueError, match="0.3"):
         allocation.explain(state_row("2024-02-09"), 0.3, False, make_cfg())
+
+
+class ColumnsAgent:
+    """A model shaped like rl_agent.QAgent: feature_columns and predict, but no sklearn feature_names_in_."""
+
+    def __init__(self, feature_columns: list[str]) -> None:
+        """Keep the columns the agent reads."""
+        self.feature_columns = feature_columns
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        """Rebalance fully when SPY drifts above 5 points, else do nothing; fails on any extra column."""
+        assert list(X.columns) == self.feature_columns
+        return np.where(X["drift_SPY"] > 0.05, 1.0, 0.0)
+
+
+def test_unit_smart_works_with_a_model_that_lists_feature_columns():
+    close, _ = make_prices()
+    smart = resolve("smart", close, make_cfg(), model=ColumnsAgent(["drift_SPY", "drawdown"]))
+    assert smart(state_row("2024-02-09", {"SPY": 0.06, "IEF": -0.06})) == 1.0
+    assert smart(state_row("2024-02-09", {"SPY": 0.01, "IEF": -0.01})) == 0.0
+
+
+def test_unit_smart_raises_on_a_model_without_feature_columns():
+    close, _ = make_prices()
+    with pytest.raises(ValueError, match="feature_names_in_ or feature_columns"):
+        resolve("smart", close, make_cfg(), model=object())

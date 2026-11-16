@@ -160,15 +160,32 @@ def _rule_settings(method: str, cfg: dict) -> dict:
     return {"drift_band": band, "quarter_months": months}
 
 
+def _feature_columns(model: Pipeline) -> list[str]:
+    """The state columns a fitted model reads.
+
+    Inputs:  model, a scikit-learn pipeline (feature_names_in_) or the RL agent, rl_agent.QAgent (feature_columns).
+    Outputs: the column names, in the order the model was fitted on.
+    Why:     smart works with either model type (model.type classifier or fitted_q).
+    Raises:  ValueError if the model has neither attribute.
+    """
+    if hasattr(model, "feature_names_in_"):
+        return list(model.feature_names_in_)
+    if hasattr(model, "feature_columns"):
+        return list(model.feature_columns)
+    raise ValueError(f"The model ({type(model).__name__}) has no feature_names_in_ or feature_columns, so smart "
+                     "cannot tell which state columns to pass. Fit it with train.train_model or rl_agent.fit_q_agent.")
+
+
 def _model_policy(model: Pipeline) -> Policy:
     """Wrap the fitted model as a policy, exactly as main.py does for the Stage 2 run.
 
-    Inputs:  model, the fitted pipeline (it remembers its feature columns in feature_names_in_).
+    Inputs:  model, the fitted pipeline or the RL agent (both remember their feature columns).
     Outputs: policy(state_row) -> the model's action.
     Why:     smart is our model deciding at each review; reading the columns from the model means a caller
              cannot pass the wrong list.
+    Raises:  ValueError if the model does not say which columns it reads.
     """
-    columns = list(model.feature_names_in_)
+    columns = _feature_columns(model)
 
     def policy(state_row: pd.Series) -> float:
         """Inputs: a state row. Outputs: the model's action. Why: smart rebalancing."""
