@@ -63,11 +63,14 @@ def resolve_target(method: str, cfg: dict, train_returns: pd.DataFrame | None) -
              the calculated methods; None is fine for "policy").
     Outputs: weights per ticker, long only, summing to 1 (config.load_config checks the policy mix).
     Why:     "policy" is the mix the Investment Committee approved, and the default.
-    Raises:  ValueError for an unknown method; NotImplementedError for a calculated method until
-             benchmarks.fit_weights is on dev (issue #63).
+    Raises:  ValueError for an unknown method, or a calculated method without train_returns;
+             NotImplementedError for a calculated method until benchmarks.fit_weights is on dev (issue #63).
     """
     _check_choice(TARGET_KEY, method)
     if method != "policy":
+        if train_returns is None:
+            raise ValueError(f"target_weights.method {method!r} fits the weights on the train years: pass "
+                             "train_returns (daily returns of the train years).")
         raise NotImplementedError(f"target_weights.method {method!r} calculates the weights with "
                                   "benchmarks.fit_weights (issue #63), which is not in this version yet. "
                                   "Use 'policy' for now.")

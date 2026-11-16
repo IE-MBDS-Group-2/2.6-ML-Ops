@@ -174,8 +174,10 @@ def test_unit_smart_without_a_model_uses_the_rule():
 
 
 def test_unit_calculated_target_waits_for_benchmarks():
-    with pytest.raises(NotImplementedError, match="#63"):
+    with pytest.raises(ValueError, match="train_returns"):
         allocation.resolve_target("min_variance", make_cfg(), None)
+    with pytest.raises(NotImplementedError, match="#63"):
+        allocation.resolve_target("min_variance", make_cfg(), alternating_returns())
 
 
 def test_unit_explain_halfway_and_full_without_a_breach():
