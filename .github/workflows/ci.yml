@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
 jobs:
+  # The job name is the required check on dev and main (rulesets): never rename it.
   lint-and-test:
     runs-on: ubuntu-latest
     defaults:
@@ -14,12 +15,36 @@ jobs:
         shell: bash -el {0}
     steps:
       - uses: actions/checkout@v4
-      - uses: conda-incubator/setup-miniconda@v3
+
+      # Fail fast: lint takes seconds, the environment takes minutes. Same flake8 version as the lock file.
+      - name: flake8 (before the environment)
+        run: |
+          version="$(grep -A1 '^- name: flake8$' conda-lock.yml | sed -n 's/^  version: //p')"
+          pipx run "flake8==${version}" --isolated --max-line-length=120 --extend-ignore=E203 src tests scripts
+
+      # The exact package versions the Docker image ships, not a fresh solve of environment.yml.
+      - name: environment from conda-lock.yml
+        uses: mamba-org/setup-micromamba@v2
         with:
-          environment-file: environment.yml
-          activate-environment: mlops-group2
-          auto-activate-base: false
-      - name: flake8
-        run: flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
+          environment-file: conda-lock.yml
+          environment-name: mlops-group2
+          init-shell: bash
+          cache-environment: true
+
+      # A changed environment.yml without a regenerated lock re-solves here and changes the file: red.
+      - name: conda-lock.yml matches environment.yml
+        run: |
+          conda-lock lock --check-input-hash -f environment.yml -p linux-64
+          git diff --exit-code conda-lock.yml
+
       - name: pytest with branch coverage
         run: pytest --cov=src --cov-branch --cov-report=term-missing --cov-fail-under=90
+
+      - name: radon (no function above complexity 10)
+        run: |
+          report="$(radon cc src -s -n C)"
+          echo "${report:-radon: nothing above complexity 10}"
+          test -z "$report"
+
+      - name: docker build
+        run: docker build -t etf-advisor .
