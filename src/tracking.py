@@ -149,3 +149,39 @@ def log_model(run: wandb.Run | None, path: Path, name: str, metadata: dict) -> N
         return
     run.log_artifact(_file_artifact(path, name, "model", metadata=metadata), aliases=[LATEST_ALIAS])
     logger.info("Logged model %s to W&B from %s with alias %s", name, path, LATEST_ALIAS)
+
+
+def _find_joblib(folder: Path, address: str) -> Path:
+    """Return the .joblib file inside a downloaded artifact folder.
+
+    Inputs:  folder, where W&B put the artifact's files; address, the artifact address (for the error message).
+    Outputs: the path of the model file.
+    Why:     W&B downloads a folder, but the API needs the one file it can load with joblib.
+    Raises:  FileNotFoundError if the folder holds no .joblib file.
+    """
+    model_files = sorted(folder.glob("*.joblib"))
+    if not model_files:
+        raise FileNotFoundError(f"The W&B artifact {address} was downloaded to {folder} but holds no .joblib file. "
+                                "Check that the model was registered with tracking.log_model.")
+    return model_files[0]
+
+
+def download_model(env: dict[str, str], project: str, name: str, alias: str) -> Path:
+    """Download a registered model from W&B by its alias and return the path of its .joblib file.
+
+    Inputs:  env, the values from config.load_env (WANDB_ENTITY, WANDB_API_KEY); project, the W&B project;
+             name, the model artifact's name; alias, which version to fetch (normally "prod").
+    Outputs: the local path of the downloaded .joblib file.
+    Why:     api.py serves the model a person promoted in the W&B UI; no training run is needed to fetch it.
+    Raises:  FileNotFoundError if no version has that alias, or the download holds no .joblib file.
+    """
+    address = f"{env['WANDB_ENTITY']}/{project}/{name}:{alias}"
+    api = wandb.Api(api_key=env["WANDB_API_KEY"] or None)
+    try:
+        folder = Path(api.artifact(address).download())
+    except ValueError as error:
+        raise FileNotFoundError(f"Model {address} not found in W&B: no version has the alias {alias!r}. Promote a "
+                                f"model to {alias!r} in the W&B UI, or set MODEL_SOURCE=local.") from error
+    model_file = _find_joblib(folder, address)
+    logger.info("Downloaded model %s to %s", address, model_file)
+    return model_file
