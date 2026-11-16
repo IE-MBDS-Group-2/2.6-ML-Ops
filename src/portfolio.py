@@ -360,3 +360,81 @@ def build_decision_table(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, ma
     logger.info("Decision table: %d rows, label counts %s", len(table),
                 table[target_column].value_counts().sort_index().to_dict())
     return table
+
+
+def _check_live_inputs(close_wide: pd.DataFrame, weights: pd.Series, drawdown: float,
+                       weeks_since_rebalance: int) -> None:
+    """Fail fast on the client's position inputs before any maths.
+
+    Inputs:  close_wide (its columns are the portfolio's tickers); the client's weights, drawdown and weeks.
+    Outputs: None; raises on the first problem found.
+    Why:     a live request comes from outside the pipeline, so nothing about it can be assumed.
+    Raises:  ValueError naming what is wrong and how to fix it.
+    """
+    if set(weights.index) != set(close_wide.columns):
+        raise ValueError(f"Position weights are for tickers {sorted(weights.index)}, but the prices have "
+                         f"{sorted(close_wide.columns)}. Send exactly one weight per portfolio ETF.")
+    if abs(float(weights.sum()) - 1.0) > _SUM_TOLERANCE:
+        raise ValueError(f"Position weights must sum to 1, got {float(weights.sum()):.6f}. "
+                         "Send fractions of portfolio value (0.40, not 40).")
+    if drawdown > 0:
+        raise ValueError(f"drawdown must be 0 or negative (value / running peak - 1), got {drawdown}. "
+                         "A portfolio at its peak has drawdown 0.")
+    if weeks_since_rebalance < 0:
+        raise ValueError(f"weeks_since_rebalance must be 0 or more, got {weeks_since_rebalance}. "
+                         "Send the number of reviews since the last rebalance.")
+
+
+def _last_market_row(market_features: pd.DataFrame, day: pd.Timestamp) -> pd.DataFrame:
+    """The market features on the request date, as a one-row frame; every value must be known.
+
+    Inputs:  market_features from features.compute_market_features; day, the last price date.
+    Outputs: market_features restricted to [day] (what _state_row reads).
+    Why:     the model was trained without gaps on its inputs, so a missing value means too little history.
+    Raises:  ValueError if the date is absent or any feature is NaN on it.
+    """
+    market = market_features.reindex([day])
+    missing = [str(column) for column in market.columns[market.iloc[0].isna()]]
+    if missing:
+        raise ValueError(f"Market features {missing} are missing on {day.date()}: too little price history. "
+                         "Send more trading days of prices (the longest return window needs them).")
+    return market
+
+
+def live_state(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_features: pd.DataFrame,
+               weights: pd.Series, drawdown: float, weeks_since_rebalance: int, target: pd.Series,
+               cfg: dict) -> pd.DataFrame:
+    """The model's state row for one live request, built by the same code as the decision table.
+
+    Inputs:  close_wide, volume_wide (date x ticker) of recent prices, ending on the request date;
+             market_features from features.compute_market_features on those prices; the client's current
+             weights (fractions per ticker), drawdown (value / peak - 1, at most 0) and weeks_since_rebalance;
+             target weights; cfg, the full config (reads costs, portfolio.current_rule, problem.id_column).
+    Outputs: one row indexed by the last date of close_wide (index name problem.id_column) with the decision
+             table's columns in its order (w_<T>, drift_<T>, drawdown, weeks_since_rebalance,
+             full_rebalance_cost, market features) plus rule_action, today's rule on that date.
+    Why:     the API must feed the model exactly what it learned from; reusing _state_row and today's rule
+             policy means a live request and the training table cannot drift apart.
+    Raises:  ValueError if the weights do not fit the tickers or do not sum to 1, drawdown > 0,
+             weeks_since_rebalance < 0, the market features are missing on the last date, or the target
+             does not fit the prices.
+    """
+    tickers = _check_target(close_wide, target)
+    _check_live_inputs(close_wide, weights, drawdown, weeks_since_rebalance)
+    day = close_wide.index[-1]
+    run = {
+        "target": target.reindex(tickers),
+        "adv": costs.average_daily_dollar_volume(close_wide[tickers], volume_wide[tickers],
+                                                 cfg["costs"]["slippage"]["adv_window"]),
+        "market": _last_market_row(market_features, day),
+    }
+    # value 1 + drawdown against a peak of 1 gives back exactly the client's drawdown in _state_row.
+    book = {"weights": weights.reindex(tickers).astype(float), "value": 1.0 + drawdown, "peak": 1.0,
+            "weeks": weeks_since_rebalance}
+    state = _state_row(day, book, run, cfg)
+    decisions = decision_dates(close_wide.index, str(close_wide.index[0].date()), str(day.date()))
+    state[RULE_ACTION_COLUMN] = make_current_rule_policy(run["target"], decisions, cfg)(state)
+    logger.info("Live state on %s: max drift %.4f, today's rule %.1f", day.date(),
+                float((book["weights"] - run["target"]).abs().max()), state[RULE_ACTION_COLUMN])
+    return pd.DataFrame([state.to_numpy()], columns=state.index,
+                        index=pd.DatetimeIndex([day], name=_problem_column(cfg, "id_column")))
