@@ -187,15 +187,18 @@ At the firm: the quant analyst runs and monitors it, portfolio managers decide, 
 conda env create -f environment.yml
 conda activate mlops-group2
 ```
+This works on macOS, Windows and Linux. CI, Docker and Render use the exact versions in `conda-lock.yml`. That file is made for Linux only (`linux-64`), so on a Mac or a Windows PC use the command above, or run the Docker image below. On Linux: `conda-lock install -n mlops-group2 conda-lock.yml`.
 
 ## Get the data
 The pipeline never downloads data. Use the `prices.csv` that Ricardo shares with the team. It is not in Git, because Yahoo's API is for personal use only.
 
 1. Create the folders (Git does not keep empty folders): `mkdir -p data/raw data/inference` (Windows: `mkdir data\raw data\inference`). Put the file at `data/raw/prices.csv`.
-2. Check its SHA-256 against the one in `TEAM_BRIEF.md`. On Windows: `certutil -hashfile data\raw\prices.csv SHA256`. On Mac or Linux: `shasum -a 256 data/raw/prices.csv`.
-3. The run also reads `data/inference/prices_latest.csv`, the last 300 trading days of the same snapshot. Ask Ricardo for it too.
+2. Check its SHA-256 against the Data table in the Model card above. On Windows: `certutil -hashfile data\raw\prices.csv SHA256`. On Mac or Linux: `shasum -a 256 data/raw/prices.csv`.
+3. The run also reads `data/inference/prices_latest.csv`, the last 300 trading days of the same snapshot. Ask Ricardo for it too, and check its SHA-256 in the same table.
 
 Run `python scripts/fetch_prices.py` only to make a new snapshot. Downloads differ over time, so a new file has a different checksum and gives different results.
+
+No access to the snapshot? Make sample data instead: `python -m scripts.make_sample_prices`. The prices are random, every run logs that they are SYNTHETIC, and CI uses them. The script refuses to overwrite a file that already exists unless you pass `--force`, so it cannot replace the real snapshot by accident. Results on sample data mean nothing.
 
 ## Run
 ```bash
@@ -213,6 +216,51 @@ One command runs every step and writes these files. Git ignores them.
 The log (`logs/pipeline.log`) says "Quality gate met" or "NOT met". If the data or config is wrong, the run stops with exit code 1 and says what to fix.
 
 The predictions use the inference file, which ends in 2025. They are a demo of the output, not out-of-sample evidence.
+
+## Serve the API
+The service has two endpoints: `GET /health` (is it up, which model and release) and `POST /predict` (a portfolio's positions and recent prices in; a recommendation, the reason, a proposed portfolio and a trades list out).
+
+```bash
+cp .env.example .env     # first time only (Windows: copy .env.example .env)
+uvicorn src.api:app      # from the repository root, with mlops-group2 active
+```
+Then open `http://127.0.0.1:8000/docs` for the interactive page, where you can try both endpoints.
+
+**Settings** live in `.env` and never go in Git. Running locally needs no key.
+
+| Name | Meaning |
+| --- | --- |
+| `MODEL_SOURCE` | `local` reads `models/model.joblib`; `wandb` downloads the model with the alias `prod` |
+| `WANDB_MODE` | `online`, `offline` or `disabled` |
+| `WANDB_API_KEY` | your **own** key, only for `wandb` or `online` (team `ie-mbds-group-2`, ask Miguel for an invite) |
+| `WANDB_ENTITY`, `WANDB_MODEL_ALIAS`, `APP_VERSION` | the W&B team, the model alias (`prod`) and the release name shown by `/health` |
+
+**No model yet?** No model has passed the gate, so none is saved. The service still starts and answers with today's rule, with `fallback: true` and the reason in plain words.
+
+**Call it with `curl`**, using the sample request (`scripts/sample_request.json`, built from sample prices):
+```bash
+curl -s http://127.0.0.1:8000/health
+curl -s -X POST http://127.0.0.1:8000/predict -H "Content-Type: application/json" -d @scripts/sample_request.json
+```
+
+| You send (`/predict`) | |
+| --- | --- |
+| `as_of` | the review date |
+| `positions` | a list of `{ticker, market_value}`; only the configured tickers, values 0 or more, total above 0 |
+| `drawdown` | 0 at the portfolio's peak, negative below it |
+| `weeks_since_rebalance` | reviews since the last rebalance, 0 or more |
+| `prices` | at least 61 trading days of the five ETFs (`api.min_history_days`) |
+| `target_method`, `rebalancing_method`, `portfolio_id` | optional; the defaults are the policy mix and our model (`config.yaml`) |
+
+You get back `recommendation` (0.0, 0.5 or 1.0), `fallback` (true when today's rule decided), `reason`, `proposed_portfolio` (ticker, weight, value), `trades` (ticker, side, value, weight before and after) and `model_version`. A field that breaks the request gives HTTP 422 with the allowed values. Data the pipeline cannot use gives HTTP 400 with the pipeline's own message. Prices and positions are never logged.
+
+Check a running service end to end (works on a local run, a Docker run or the live URL):
+```bash
+python scripts/smoke_test.py --url http://127.0.0.1:8000
+```
+It exits with 0 when `/health` is ok and `/predict` answers the sample request.
+
+**Live service:** PENDING: the URL is added after the `v1.1.0` release. Runs, data versions and models are in Weights & Biases: `https://wandb.ai/ie-mbds-group-2/etf-rebalancing`.
 
 ## Test
 ```bash
