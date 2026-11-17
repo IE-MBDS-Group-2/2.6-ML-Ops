@@ -174,7 +174,7 @@ def test_unit_sample_request_holds_only_synthetic_prices():
     # The file is exactly what the seeded random walk writes, so it cannot hold the real snapshot.
     cfg = yaml.safe_load((SCRIPTS.parent / "config.yaml").read_text(encoding="utf-8"))
     body = json.loads((SCRIPTS / "sample_request.json").read_text(encoding="utf-8"))
-    assert body == json.loads(json.dumps(make_sample_request.build_request(cfg, 70, 42, 1_000_000)))
+    assert body == json.loads(json.dumps(make_sample_request.build_request(cfg, 70, 1_000_000)))
 
 
 def test_integration_sample_request_answers_200(monkeypatch):
@@ -189,12 +189,24 @@ def test_integration_sample_request_answers_200(monkeypatch):
 
 def test_unit_make_sample_request_main_writes_the_file(tmp_path):
     out = tmp_path / "request.json"
-    make_sample_request.main(["--out", str(out), "--days", "65", "--seed", "1"])
+    make_sample_request.main(["--out", str(out), "--days", "65"])
     body = json.loads(out.read_text(encoding="utf-8"))
     assert len(body["prices"]) == 65 * len(body["positions"])
     assert body["drawdown"] == 0.0 and body["weeks_since_rebalance"] == 0
 
 
-def test_unit_synthetic_prices_raise_on_no_days():
-    with pytest.raises(ValueError, match="days must be 1 or more"):
-        make_sample_request.synthetic_prices(["SPY"], "2025-12-31", 0, 42)
+def test_unit_sample_request_raises_below_the_api_minimum():
+    cfg = yaml.safe_load((SCRIPTS.parent / "config.yaml").read_text(encoding="utf-8"))
+    needed = cfg["api"]["min_history_days"]
+    with pytest.raises(ValueError, match=f"at least {needed} trading days"):
+        make_sample_request.build_request(cfg, needed - 1, 1_000_000)
+
+
+def test_unit_sample_request_uses_the_ci_generator():
+    # One synthetic generator for CI and the sample (same function, same seed): 70 dates up to as_of, all tickers.
+    cfg = yaml.safe_load((SCRIPTS.parent / "config.yaml").read_text(encoding="utf-8"))
+    body = make_sample_request.build_request(cfg, 70, 1_000_000)
+    columns = cfg["data"]["columns"]
+    dates = sorted({record[columns["date_column"]] for record in body["prices"]})
+    assert len(dates) == 70 and dates[-1] == body["as_of"]
+    assert {record[columns["ticker_column"]] for record in body["prices"]} == set(cfg["data"]["tickers"])
