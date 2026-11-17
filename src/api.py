@@ -192,15 +192,25 @@ class PredictionMonitor:
     """
 
     def __init__(self, run: tracking.wandb.Run | None, batch_size: int) -> None:
-        """Inputs: run, the W&B serve run or None (tracking off: nothing is kept or sent); batch_size, rows per
-        table (api.monitoring_batch_size)."""
+        """Keep the run and an empty batch.
+
+        Inputs:  run, the W&B serve run or None (tracking off: nothing is kept or sent); batch_size, rows per
+                 table (api.monitoring_batch_size).
+        Outputs: None.
+        Why:     the lock keeps the batch whole when requests arrive at the same time (they run in a thread pool).
+        """
         self.run = run
         self.batch_size = batch_size
         self.rows: list[dict] = []
         self._lock = threading.Lock()   # requests run in a thread pool
 
     def record(self, row: dict) -> None:
-        """Add one answer; send and clear the batch once it holds batch_size rows."""
+        """Add one answer; send and clear the batch once it holds batch_size rows.
+
+        Inputs:  row, one answer (as_of, recommendation, probability, fallback, model_version, latency_ms).
+        Outputs: None.
+        Why:     one W&B call per batch instead of per request keeps /predict fast.
+        """
         if self.run is None:
             return
         with self._lock:
@@ -211,14 +221,24 @@ class PredictionMonitor:
         self._send(batch)
 
     def flush(self) -> None:
-        """Send whatever is left (at shutdown), so the last partial batch is not lost."""
+        """Send whatever is left in the batch.
+
+        Inputs:  none.
+        Outputs: None.
+        Why:     called at shutdown, so the last partial batch is not lost.
+        """
         with self._lock:
             batch, self.rows = self.rows, []
         if batch:
             self._send(batch)
 
     def _send(self, batch: list[dict]) -> None:
-        """Log one batch to W&B; a tracking error is logged, never raised."""
+        """Log one batch to W&B.
+
+        Inputs:  batch, the rows to send.
+        Outputs: None.
+        Why:     a tracking error is logged, never raised, so monitoring can never break serving.
+        """
         try:
             tracking.log_prediction_batch(self.run, batch)
         except tracking.TRACKING_ERRORS as error:

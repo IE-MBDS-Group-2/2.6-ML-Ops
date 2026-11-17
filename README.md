@@ -176,9 +176,7 @@ The live service sends its answers to Weights & Biases so the team can see when 
 - **What is logged:** for each `/predict` answer, `as_of`, `recommendation`, `probability`, `fallback`, `model_version` and the latency in ms. The API keeps the last `api.monitoring_batch_size` answers (20) in memory and logs them as one table (`serve/predictions`) under a W&B run with job type `serve`. The last partial batch is sent when the service shuts down.
 - **What is not logged:** the request itself. Positions, prices and `portfolio_id` never leave the service, and the log has one line per request (as_of, recommendation, fallback, latency). No personal data is involved: the inputs are ETF prices and portfolio weights.
 - **Never breaks serving:** with `WANDB_MODE=disabled` or `tracking.enabled: false` nothing is kept or sent. If W&B cannot be reached, at start-up or later, the error is logged and the request still gets its answer.
-- **Retrain triggers:** retrain, and run the quality gate again, when either of these happens:
-  - the fallback rate is above 50% for 4 weeks in a row (the model is rarely confident enough to override today's rule), or
-  - the live drawdown reduction against today's rule is below 0 over a quarter (the model is doing worse than the rule it replaces).
+- **Retrain triggers:** the full list is in one place, "What triggers a retrain" in the model card. This monitoring measures the first two: the fallback rate (above 50% for 4 weeks in a row) and the live drawdown reduction against today's rule (below 0 over a quarter).
 
 ## Repo structure
 ```text
