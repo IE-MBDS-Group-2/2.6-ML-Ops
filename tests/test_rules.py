@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src import portfolio, rules
+from src import evaluate, portfolio, rules
 
 TICKERS = ["SPY", "EFA", "IEF", "GLD", "BIL"]
 TARGET = pd.Series([0.40, 0.20, 0.30, 0.05, 0.05], index=TICKERS)
@@ -29,6 +29,7 @@ def make_cfg() -> dict:
             "equity_tickers": ["SPY", "EFA"],
         },
         "guards": {"max_return_shortfall": 0.0025, "max_cost_ratio": 2.0, "max_tracking_error": 0.012},
+        "rebalancing": {"review": "weekly"},
     }
 
 
@@ -59,7 +60,7 @@ def state_row(date: str, shifts: dict | None = None, weeks: int = 0, drawdown: f
 
 def policy_for(name: str, close: pd.DataFrame, target: pd.Series = TARGET, cfg: dict | None = None):
     """make_rule_policy on the decision dates of `close`."""
-    decisions = portfolio.decision_dates(close.index, str(close.index[0].date()), str(close.index[-1].date()))
+    decisions = portfolio.decision_dates(close.index, str(close.index[0].date()), str(close.index[-1].date()), "weekly")
     return rules.make_rule_policy(name, target, decisions, close, cfg or make_cfg())
 
 
@@ -131,7 +132,7 @@ def test_unit_asymmetric_fires_fully_on_a_drawdown_breach():
 
 def test_unit_today_rule_equals_stage_2():
     close, volume = make_prices(periods=120)
-    decisions = portfolio.decision_dates(close.index, "2024-01-01", "2024-06-14")
+    decisions = portfolio.decision_dates(close.index, "2024-01-01", "2024-06-14", "weekly")
     market, cfg = pd.DataFrame(index=close.index), make_cfg()
     runs = [portfolio.simulate(close, volume, market, TARGET, policy, "2024-01-01", "2024-06-14", cfg)[1]
             for policy in (rules.make_rule_policy("current", TARGET, decisions, close, cfg),
@@ -193,6 +194,27 @@ def test_integration_run_challengers_one_row_per_rule():
         assert column in results.columns, column
     assert results.loc["current", "guards_passed"]  # today's rule against itself passes every guard
     assert set(results.attrs["guards"]) == set(rules.RULES)
+
+
+def test_unit_review_dates_follow_the_review_setting():
+    close, _ = make_prices(periods=120)
+    cfg = {**make_cfg(), "rebalancing": {"review": "monthly"}}
+    assert list(rules.review_dates(close, "2024-01-01", "2024-04-30", cfg)) == list(
+        pd.DatetimeIndex(["2024-01-31", "2024-02-29", "2024-03-29", "2024-04-30"]))
+
+
+def test_integration_run_challengers_tracking_error_uses_the_reviews_per_year():
+    # Monthly reviews: tracking error on month-end values, annualised with 12 periods, not 52.
+    close, volume = make_prices(periods=260)
+    cfg = {**make_cfg(), "rebalancing": {"review": "monthly"}}
+    results = rules.run_challengers((close, volume, pd.DataFrame(index=close.index)), TARGET, cfg,
+                                    "2024-01-01", "2024-12-31")
+    reviews = rules.review_dates(close, "2024-01-01", "2024-12-31", cfg)
+    daily, _ = portfolio.simulate(close, volume, pd.DataFrame(index=close.index), TARGET,
+                                  rules.make_rule_policy("current", TARGET, reviews, close, cfg),
+                                  "2024-01-01", "2024-12-31", cfg)
+    expected = evaluate.tracking_error(daily["value"].reindex(reviews), rules.target_path(close, TARGET, reviews), 12)
+    assert results.loc["current", "tracking_error"] == pytest.approx(expected)
 
 
 def test_integration_run_challengers_without_the_agent_skips_matched_exposure():
