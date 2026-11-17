@@ -1,5 +1,6 @@
 """Tests for src/main.py: both splits, the pipeline and the entry point."""
 
+import ast
 import json
 import logging
 from pathlib import Path
@@ -9,7 +10,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from src import config, main, utils
+from src import config, evaluate, main, tracking, utils
 
 TICKERS = ["SPY", "EFA", "IEF", "GLD", "BIL"]
 
@@ -135,17 +136,31 @@ def _pipeline_setup(tmp_path: Path, monkeypatch, prices: pd.DataFrame | None = N
     return cfg
 
 
+def _force_gate(monkeypatch, met: bool) -> None:
+    """Make the quality gate pass or fail whatever the synthetic model does, to test both branches."""
+    monkeypatch.setattr(evaluate, "check_gate", lambda value, comparison, threshold, tolerance=1e-9: met)
+
+
+def _record(monkeypatch, name: str) -> list:
+    """Replace one tracking function with a recorder and return the list of its calls."""
+    calls = []
+    monkeypatch.setattr(tracking, name, lambda *args, **kwargs: calls.append((args, kwargs)))
+    return calls
+
+
 def test_integration_pipeline_writes_every_output(tmp_path, monkeypatch):
-    """main() on synthetic prices writes the 4 outputs, and the saved model predicts."""
+    """main() on synthetic prices with a passing gate writes every output, and the saved model predicts."""
     cfg = _pipeline_setup(tmp_path, monkeypatch)
+    _force_gate(monkeypatch, True)
     main.main()
-    for name in ("processed_data", "model", "predictions", "metrics"):
+    for name in ("processed_data", "model", "predictions", "metrics", "challengers"):
         assert (tmp_path / cfg["paths"][name]).exists()
     model = utils.load_model(tmp_path / cfg["paths"]["model"])
     metrics = json.loads((tmp_path / cfg["paths"]["metrics"]).read_text(encoding="utf-8"))
-    assert {"accuracy", "f1_macro", "agent", "baseline", "gate"} <= set(metrics)
+    assert {"accuracy", "f1_macro", "agent", "baseline", "gate", "guards", "challenger"} <= set(metrics)
     assert metrics["split"] == "validation"
-    assert metrics["gate"]["met"] == (metrics["max_drawdown_reduction"] >= 0.20)
+    assert set(metrics["guards"]) == {"return_shortfall", "cost_ratio", "tracking_error"}
+    assert "tracking_error" in metrics["agent"]
     predictions = pd.read_csv(tmp_path / cfg["paths"]["predictions"])
     assert predictions.columns[0] == "decision_date"
     assert predictions["decision_date"].is_unique
@@ -154,6 +169,102 @@ def test_integration_pipeline_writes_every_output(tmp_path, monkeypatch):
     assert list(model.classes_) == [0.0, 1.0] or list(model.classes_) == [0.0, 0.5, 1.0]
     # 5 weights + 5 drifts + 3 state numbers + 15 market features
     assert len(model.feature_names_in_) == 28
+    challengers = pd.read_csv(tmp_path / cfg["paths"]["challengers"])
+    assert "current" in set(challengers["rule"])
+    assert metrics["challenger"]["name"] in set(challengers["rule"])
+
+
+def test_unit_gate_met_saves_and_registers(tmp_path, monkeypatch):
+    """A model that passes the gate gets the one-time test audit, is saved, and is registered once."""
+    cfg = _pipeline_setup(tmp_path, monkeypatch)
+    _force_gate(monkeypatch, True)
+    registered = _record(monkeypatch, "log_model")
+    logged = _record(monkeypatch, "log_metrics")
+    tables = _record(monkeypatch, "log_table")
+    cfg["tracking"]["log_predictions_table"] = False
+    metrics = main.run(cfg)
+    assert tables == []                                   # the predictions table is only sent when asked for
+    assert (tmp_path / cfg["paths"]["model"]).exists()
+    assert len(registered) == 1
+    assert registered[0][0][2] == cfg["tracking"]["model_artifact"]
+    assert metrics["test"]["split"] == "test"
+    assert set(metrics["test"]["release"]) == {"release", "reasons"}
+    assert "challenger" in metrics["test"]["guards"]
+    assert [call[1]["prefix"] for call in logged] == ["val/", "test/"]
+
+
+def test_unit_gate_not_met_saves_nothing(tmp_path, monkeypatch):
+    """Decision D8: a failed gate saves and registers nothing, and today's rule gives every recommendation."""
+    cfg = _pipeline_setup(tmp_path, monkeypatch)
+    _force_gate(monkeypatch, False)
+    registered = _record(monkeypatch, "log_model")
+    tables = _record(monkeypatch, "log_table")
+    stale = tmp_path / cfg["paths"]["model"]
+    stale.parent.mkdir(parents=True)
+    stale.write_text("a model left over from an earlier run", encoding="utf-8")
+    main.main()                                   # exit code 0: "not met" is a result, not a crash
+    assert not stale.exists()
+    assert registered == []
+    assert [call[0][1] for call in tables] == ["predictions"]
+    metrics = json.loads((tmp_path / cfg["paths"]["metrics"]).read_text(encoding="utf-8"))
+    assert metrics["gate"]["met"] is False
+    assert "test" not in metrics                  # the test years stay sealed
+    predictions = pd.read_csv(tmp_path / cfg["paths"]["predictions"])
+    assert predictions["fallback"].all()
+    assert set(predictions["recommendation"]) <= {0.0, 1.0}      # today's rule only ever says 0 or 1
+    assert (predictions["recommendation"] == predictions["prediction"]).all()
+
+
+def test_unit_error_marks_the_run_failed(tmp_path, monkeypatch):
+    """An error inside the pipeline closes the tracked run as failed and exits with code 1."""
+    _pipeline_setup(tmp_path, monkeypatch)
+    tracker = object()
+    monkeypatch.setattr(tracking, "start_run", lambda cfg, env, job_type="train": tracker)
+    finished = _record(monkeypatch, "finish_run")
+
+    def broken_run(cfg, tracker=None):
+        raise ValueError("something in the data is wrong")
+
+    monkeypatch.setattr(main, "run", broken_run)
+    with pytest.raises(SystemExit) as stopped:
+        main.main()
+    assert stopped.value.code == 1
+    assert finished == [((tracker,), {"failed": True})]
+
+
+def test_unit_a_finished_run_is_closed_as_a_success(tmp_path, monkeypatch):
+    _pipeline_setup(tmp_path, monkeypatch)
+    tracker = object()
+    monkeypatch.setattr(tracking, "start_run", lambda cfg, env, job_type="train": tracker)
+    finished = _record(monkeypatch, "finish_run")
+    monkeypatch.setattr(main, "run", lambda cfg, tracker=None: {})
+    main.main()
+    assert finished == [((tracker,), {})]
+
+
+def test_unit_main_never_imports_wandb():
+    """main.py talks to the tracker only through tracking.py, so the pipeline runs without W&B."""
+    tree = ast.parse(Path(main.__file__).read_text(encoding="utf-8"))
+    imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import)
+                for alias in node.names}
+    imported |= {node.module.split(".")[0] for node in ast.walk(tree)
+                 if isinstance(node, ast.ImportFrom) and node.module}
+    assert "wandb" not in imported
+
+
+def test_unit_period_gives_the_validation_and_test_dates():
+    cfg = {"split": {"train_end": "2019-12-31", "val_end": "2021-12-31", "test_end": "2025-12-31"}}
+    assert main._period(cfg, "validation") == ("2020-01-01", "2021-12-31")
+    assert main._period(cfg, "test") == ("2022-01-01", "2025-12-31")
+    with pytest.raises(ValueError, match="Unknown period 'train'"):
+        main._period(cfg, "train")
+
+
+def test_unit_numbers_flattens_nested_metrics_and_drops_text():
+    metrics = {"split": "validation", "accuracy": 0.5, "agent": {"max_drawdown": -0.2, "n": 3},
+               "gate": {"met": True, "comparison": ">="}, "reasons": ["a"]}
+    assert main._numbers(metrics, "val/") == {
+        "val/accuracy": 0.5, "val/agent/max_drawdown": -0.2, "val/agent/n": 3.0, "val/gate/met": 1.0}
 
 
 def test_integration_pipeline_logs_the_gate(tmp_path, monkeypatch):
@@ -182,6 +293,7 @@ def test_unit_main_exits_1_on_bad_data(tmp_path, monkeypatch):
     prices = _synthetic_prices(pd.bdate_range("2020-01-01", "2023-12-29"))
     prices.loc[10, "close"] = -1.0
     cfg = _pipeline_setup(tmp_path, monkeypatch, prices)
+    _force_gate(monkeypatch, True)
     with pytest.raises(SystemExit) as stopped:
         main.main()
     assert stopped.value.code == 1
