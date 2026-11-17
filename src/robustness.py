@@ -47,7 +47,8 @@ def feasibility_ceiling(market_data: tuple, target: pd.Series, cfg: dict, start:
     Why: Measure the protection achieved by labels that can see the next reward window.
     Raises: ValueError if a simulated portfolio path is unusable (fewer than two finite, positive values).
     """
-    baseline_policy = portfolio.make_current_rule_policy(target, rules.review_dates(market_data[0], start, end), cfg)
+    baseline_policy = portfolio.make_current_rule_policy(
+        target, rules.review_dates(market_data[0], start, end, cfg), cfg)
     labelled = portfolio.build_decision_table(*market_data, target, start, end, cfg)
     actions = labelled[cfg["problem"]["target_column"]].dropna()
 

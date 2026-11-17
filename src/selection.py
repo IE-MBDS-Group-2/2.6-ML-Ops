@@ -83,7 +83,8 @@ def _score_window(
     start, end = score_dates[0], score_dates[-1]
     period = start.date().isoformat(), end.date().isoformat()
     target_weights = pd.Series(cfg["target_weights"]["policy"], dtype=float)
-    rule = portfolio.make_current_rule_policy(target_weights, portfolio.decision_dates(score_dates, *period), cfg)
+    rule = portfolio.make_current_rule_policy(
+        target_weights, portfolio.decision_dates(score_dates, *period, portfolio.review_frequency(cfg)), cfg)
     bounded_market = tuple(frame.loc[:end] for frame in market_data)
     agent, _ = portfolio.simulate(*bounded_market, target_weights, _model_policy(model, columns), *period, cfg)
     baseline, _ = portfolio.simulate(*bounded_market, target_weights, rule, *period, cfg)

@@ -61,7 +61,7 @@ def fitted_model():
 
 def resolve(method: str, close: pd.DataFrame, cfg: dict, model=None):
     """allocation.resolve_policy on the decision dates of `close`, towards the policy target."""
-    decisions = portfolio.decision_dates(close.index, str(close.index[0].date()), str(close.index[-1].date()))
+    decisions = portfolio.decision_dates(close.index, str(close.index[0].date()), str(close.index[-1].date()), "weekly")
     return allocation.resolve_policy(method, model, TARGET, decisions, close, cfg)
 
 
@@ -91,7 +91,7 @@ def test_unit_each_calculated_target_is_valid():
 def test_unit_calendar_and_band_equals_todays_rule():
     close, volume = make_prices()
     cfg = make_cfg("quarterly", 5)
-    decisions = portfolio.decision_dates(close.index, "2024-01-01", "2024-06-14")
+    decisions = portfolio.decision_dates(close.index, "2024-01-01", "2024-06-14", "weekly")
     market = pd.DataFrame(index=close.index)
     policies = (allocation.resolve_policy("calendar_and_band", None, TARGET, decisions, close, cfg),
                 portfolio.make_current_rule_policy(TARGET, decisions, cfg))
