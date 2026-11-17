@@ -40,6 +40,18 @@ jobs:
           conda-lock lock --check-input-hash -f environment.yml -p linux-64
           git diff --exit-code conda-lock.yml
 
+      # A fresh checkout has no data/ (never committed): synthetic prices from config.yaml, logged as SYNTHETIC.
+      # Run as a module: `python scripts/make_sample_prices.py` cannot import src (see #99).
+      - name: sample prices
+        run: python -m scripts.make_sample_prices
+
+      # The whole pipeline end to end on the sample data, offline: no W&B, no secrets.
+      - name: python -m src.main on the sample data
+        env:
+          WANDB_MODE: disabled
+          MODEL_SOURCE: local
+        run: python -m src.main
+
       - name: pytest with branch coverage
         run: pytest --cov=src --cov-branch --cov-report=term-missing --cov-fail-under=90
 
