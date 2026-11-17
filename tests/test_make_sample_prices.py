@@ -1,5 +1,7 @@
 """Tests for scripts/make_sample_prices.py: deterministic synthetic prices for CI and tests."""
 
+import logging
+
 import pandas as pd
 import pytest
 
@@ -88,6 +90,15 @@ def test_integration_main_writes_both_files(tmp_path, monkeypatch):
     assert not raw.empty
     assert latest[date_column].nunique() == cfg["data"]["inference_days"]
     assert set(latest[date_column]) <= set(raw[date_column])
+
+
+def test_unit_logs_synthetic_warning(caplog):
+    """Generating prices logs a WARNING that says the data is SYNTHETIC, so nobody mistakes it for the snapshot."""
+    with caplog.at_level(logging.WARNING):
+        sample.make_sample_prices(TICKERS, "2024-01-01", "2024-01-31", 42, COLUMNS)
+
+    assert any(record.levelno == logging.WARNING and "SYNTHETIC" in record.getMessage()
+               for record in caplog.records)
 
 
 def test_unit_raises_on_end_before_start():
