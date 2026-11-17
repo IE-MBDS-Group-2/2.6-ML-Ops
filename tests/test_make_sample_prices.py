@@ -103,12 +103,56 @@ def test_integration_main_writes_both_files(tmp_path, monkeypatch):
 def test_integration_running_as_a_script_writes_both_files(tmp_path, monkeypatch):
     """python -m scripts.make_sample_prices (the CI call) runs main() and writes both files."""
     _use_config_in(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["make_sample_prices"])  # pytest's own arguments must not reach the script
     monkeypatch.delitem(sys.modules, "scripts.make_sample_prices")  # run it fresh, as python -m would
 
     runpy.run_module("scripts.make_sample_prices", run_name="__main__")
 
     assert (tmp_path / "raw" / "prices.csv").exists()
     assert (tmp_path / "inference" / "prices_latest.csv").exists()
+
+
+def test_unit_refuses_to_overwrite_existing_raw_file(tmp_path, monkeypatch):
+    """With the raw file already there and no --force, main() raises FileExistsError and writes nothing."""
+    _use_config_in(tmp_path, monkeypatch)
+    raw = tmp_path / "raw" / "prices.csv"
+    raw.parent.mkdir()
+    raw.write_text("keep me")
+
+    with pytest.raises(FileExistsError, match=r"prices\.csv.*--force"):
+        sample.main()
+
+    assert raw.read_text() == "keep me"
+    assert not (tmp_path / "inference").exists()
+
+
+def test_unit_refuses_when_only_inference_file_exists(tmp_path, monkeypatch):
+    """An existing inference file alone also stops main(): the raw file is not written either."""
+    _use_config_in(tmp_path, monkeypatch)
+    inference = tmp_path / "inference" / "prices_latest.csv"
+    inference.parent.mkdir()
+    inference.write_text("keep me")
+
+    with pytest.raises(FileExistsError, match=r"prices_latest\.csv.*--force"):
+        sample.main()
+
+    assert inference.read_text() == "keep me"
+    assert not (tmp_path / "raw").exists()
+
+
+def test_integration_force_overwrites_both_files(tmp_path, monkeypatch):
+    """With --force, main() replaces both existing files with fresh synthetic tables."""
+    cfg = _use_config_in(tmp_path, monkeypatch)
+    for name in ("raw", "inference"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / ("prices.csv" if name == "raw" else "prices_latest.csv")).write_text("old")
+
+    sample.main(["--force"])
+
+    raw = pd.read_csv(cfg["paths"]["raw_data"])
+    latest = pd.read_csv(cfg["paths"]["inference_data"])
+    assert list(raw.columns) == list(cfg["data"]["columns"].values())
+    assert len(latest) == cfg["data"]["inference_days"] * len(cfg["data"]["tickers"])
 
 
 def test_unit_logs_synthetic_warning(caplog):

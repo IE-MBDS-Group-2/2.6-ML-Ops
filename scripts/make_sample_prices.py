@@ -7,6 +7,9 @@ Input     config.yaml: data.tickers, data.start, data.end, data.columns, data.in
           paths.raw_data, paths.inference_data
 Output    the same two files fetch_prices.py writes: paths.raw_data and paths.inference_data (long format)
 Run       python -m scripts.make_sample_prices          (from the repository root)
+          python -m scripts.make_sample_prices --force  (replace files that already exist)
+Safety    An existing output file is never overwritten unless --force is passed, so a real snapshot
+          in data/ cannot be replaced by accident
 Not for   real results: the prices are random. Every run logs a WARNING that the data is SYNTHETIC
 
 Why it matters
@@ -16,7 +19,10 @@ Why it matters
 Tests     tests/test_make_sample_prices.py
 """
 
+import argparse
 import logging
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -89,16 +95,47 @@ def _latest_days(prices: pd.DataFrame, date_column: str, days: int) -> pd.DataFr
     return prices[prices[date_column].isin(latest)]
 
 
-def main() -> None:
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    """Read the command line.
+
+    Inputs:  argv, the arguments after the script name (always passed in, never read from sys.argv here).
+    Outputs: the parsed options: force (True when --force was given).
+    Why:     an explicit argv keeps pytest's own arguments away from the parser and keeps main() testable.
+    """
+    parser = argparse.ArgumentParser(description="Write synthetic sample prices for CI and tests.")
+    parser.add_argument("--force", action="store_true", help="overwrite the output files if they already exist")
+    return parser.parse_args(argv)
+
+
+def _refuse_to_overwrite(paths: list[Path], force: bool) -> None:
+    """Stop before writing anything if an output file already exists and --force was not given.
+
+    Inputs:  paths, every file main() is about to write; force, True when the user passed --force.
+    Outputs: None.
+    Why:     the real snapshot lives in the same data/ folder; synthetic data must never replace it by accident.
+             All paths are checked first, so a refusal leaves every file untouched.
+    Raises:  FileExistsError naming the existing file(s) and saying to pass --force.
+    """
+    existing = [str(path) for path in paths if path.exists()]
+    if existing and not force:
+        raise FileExistsError(f"Refusing to overwrite {', '.join(existing)}. "
+                              "Pass --force to replace the existing file(s), or move them first.")
+
+
+def main(argv: list[str] | None = None) -> None:
     """Write the synthetic raw file and the inference file, using only the settings in config.yaml.
 
-    Inputs:  none; reads config.yaml through config.load_config (data.* and paths.*; the seed is model.random_state).
+    Inputs:  argv, the command-line arguments (None means none, so a call from a test never reads sys.argv);
+             config.yaml through config.load_config (data.* and paths.*; the seed is model.random_state).
     Outputs: None. Writes paths.raw_data (the full table) and paths.inference_data (the last
              data.inference_days trading days). Missing folders are created.
     Why:     CI runs this before python -m src.main, so the pipeline has data without the real snapshot.
+    Raises:  FileExistsError if either file already exists and --force is not in argv; nothing is written.
     """
+    args = _parse_args([] if argv is None else argv)
     cfg = config.load_config()
     paths = config.resolve_paths(cfg)
+    _refuse_to_overwrite([paths["raw_data"], paths["inference_data"]], args.force)
     data = cfg["data"]
     columns = data["columns"]
     prices = make_sample_prices(data["tickers"], data["start"], data["end"], cfg["model"]["random_state"], columns)
@@ -110,4 +147,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    main()
+    main(sys.argv[1:])
