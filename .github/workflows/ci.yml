@@ -1,6 +1,8 @@
 name: ci
 on:
   merge_group:
+  # deploy.yml (#76) reruns this same CI on the release commit before deploying.
+  workflow_call:
   pull_request:
     branches: [dev, main]
   push:
@@ -43,7 +45,7 @@ jobs:
 
       - name: radon (no function above complexity 10)
         run: |
-          report="$(radon cc src -s -n C)"
+          report="$(radon cc src scripts -s -n C)"
           echo "${report:-radon: nothing above complexity 10}"
           test -z "$report"
 
