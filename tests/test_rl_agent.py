@@ -10,7 +10,8 @@ TICKERS = ["SPY", "EFA", "IEF", "GLD", "BIL"]
 TARGET = pd.Series([0.40, 0.20, 0.30, 0.05, 0.05], index=TICKERS)
 ACTIONS = [0.0, 0.5, 1.0]
 PARAMS = {"gamma": 0.9, "n_iterations": 5, "temperature": 0.5,
-          "estimator": {"max_depth": 3, "max_iter": 50, "learning_rate": 0.2, "min_samples_leaf": 1}}
+          "estimator": {"max_depth": 3, "max_iter": 50, "learning_rate": 0.2, "min_samples_leaf": 1,
+                        "early_stopping": False}}
 
 
 def make_cfg() -> dict:
@@ -139,7 +140,8 @@ def test_unit_transitions_have_state_action_reward_next_state_and_done():
     assert {"action", "reward", "done", "drawdown", "next_drawdown", "w_SPY", "next_w_SPY"} <= set(transitions.columns)
     assert set(transitions["action"]) <= set(ACTIONS)
     assert transitions["reward"].notna().all()
-    assert int(transitions["done"].sum()) == 2          # one final transition per run
+    assert not transitions["done"].any()                # the data ends, the portfolio does not
+    assert transitions.filter(like="next_").notna().all().all()      # so every row has a real next state
     # The next state of a row is the state of the following decision in the same run.
     one_run = transitions.iloc[: len(transitions) // 2]
     assert np.allclose(one_run["next_drawdown"].iloc[:-1], one_run["drawdown"].iloc[1:])
@@ -178,53 +180,69 @@ def test_unit_rewards_are_measured_against_the_average_run_on_each_date():
     assert transitions["reward"].abs().max() < 0.01      # the market's weekly move is gone; only small gaps remain
 
 
-def test_unit_window_rewards_known_value_without_costs_or_drawdown():
-    # SPY (40%) rises 10% inside one reward window; a do-nothing policy earns 0.4 x 0.10 = 0.04 there, 0 elsewhere.
-    days = pd.bdate_range("2024-01-01", "2024-02-02", name="date")
-    close = pd.DataFrame(100.0, index=days, columns=TICKERS)
-    close.loc["2024-01-17":, "SPY"] = 110.0
-    volume = pd.DataFrame(1_000_000.0, index=days, columns=TICKERS)
-    daily, decisions = portfolio.simulate(close, volume, pd.DataFrame(index=days), TARGET, lambda row: 0.0,
-                                          "2024-01-01", "2024-02-02", make_cfg())
-    rewards = rl_agent.window_rewards(daily, decisions.index, penalty_lambda=1.0)
-    # Decisions on Fridays 5, 12, 19, 26 Jan and 2 Feb. The window of 12 Jan runs 16 Jan to 22 Jan: it holds the jump.
-    assert rewards.loc["2024-01-12"] == pytest.approx(0.04)
-    assert rewards.loc["2024-01-05"] == pytest.approx(0.0)
-    assert rewards.loc["2024-01-19"] == pytest.approx(0.0)
-    assert rewards.iloc[-2:].isna().all()               # no complete window at the end of the data
-
-
-def test_unit_window_rewards_join_up_with_no_gap_or_overlap():
+def test_integration_transition_rewards_are_portfolios_realised_rewards():
+    # One reward function for labels and agent: replay the first run and compare, before centring by date.
     market = make_market()
-    daily, decisions = portfolio.simulate(*market, TARGET, lambda row: 0.0, "2024-01-01", end_date(market),
-                                          make_cfg())
-    schedule = portfolio.execution_schedule(daily.index, decisions.index).dropna()
-    days = daily.index
-    for position in range(len(schedule) - 1):
-        this, following = schedule.iloc[position], schedule.iloc[position + 1]
-        assert this["reward_start"] > this["execution_date"]
-        assert days.get_loc(following["reward_start"]) == days.get_loc(this["reward_end"]) + 1
+    cfg, end = make_cfg(), end_date(market)
+    transitions = rl_agent.collect_transitions(market, TARGET, cfg, "2024-01-01", end, 2, seed=3)
+    rng = np.random.default_rng(3)
+    runs = []
+    for _ in range(2):
+        daily, decisions = portfolio.simulate(*market, TARGET, lambda row: float(rng.choice(ACTIONS)),
+                                              "2024-01-01", end, cfg)
+        runs.append(portfolio.realised_rewards(daily, decisions, market[0], market[1], TARGET, cfg).dropna())
+    expected = pd.concat(runs)
+    expected = expected - expected.groupby(level=0).transform("mean")
+    assert np.allclose(transitions["reward"].to_numpy(), expected.to_numpy())
 
 
-def test_integration_window_rewards_match_the_reward_the_labels_use():
-    # The realised reward of a run must equal portfolio's own reward for the action that run took.
-    market = make_market()
-    close, volume, _ = market
-    cfg = make_cfg()
-    rng = np.random.default_rng(4)
-    daily, decisions = portfolio.simulate(*market, TARGET, lambda row: float(rng.choice(ACTIONS)), "2024-01-01",
-                                          end_date(market), cfg)
-    realised = rl_agent.window_rewards(daily, decisions.index, cfg["portfolio"]["reward"]["penalty_lambda"])
-    returns = close[TICKERS].pct_change(fill_method=None)
-    peaks = (daily["value"] / (1.0 - daily["cost_paid"])).cummax()
-    schedule = portfolio.execution_schedule(daily.index, decisions.index).dropna()
-    for decided, when in list(schedule.iterrows())[:8]:
-        weights = decisions.loc[decided, [f"w_{ticker}" for ticker in TICKERS]].set_axis(TICKERS).astype(float)
-        state = {"weights": weights, "value": daily.at[decided, "value"], "peak": peaks.at[decided], "adv": None}
-        start = portfolio._window_start(state, returns.loc[decided:when["execution_date"]].iloc[1:])
-        expected = portfolio._reward(start, decisions.at[decided, "action"],
-                                     returns.loc[when["reward_start"]:when["reward_end"]], TARGET, cfg)
-        assert realised.loc[decided] == pytest.approx(expected, abs=1e-9)
+# ---------- the confidence score and the fallback ----------
+
+def test_unit_confidence_score_does_not_depend_on_the_size_of_the_rewards():
+    # Weekly rewards are tiny. Shrinking every reward 1000 times must not change how sure the agent looks.
+    rows = [(x, action, action * (1 + x), x, True) for x in (0.0, 1.0) for action in ACTIONS]
+    small = [(x, action, reward / 1000, next_x, done) for x, action, reward, next_x, done in rows]
+    states = pd.DataFrame({"x": [0.0, 1.0]})
+    big_agent = rl_agent.fit_q_agent(toy_transitions(rows), ["x"], ACTIONS, PARAMS, random_state=0)
+    small_agent = rl_agent.fit_q_agent(toy_transitions(small), ["x"], ACTIONS, PARAMS, random_state=0)
+    assert small_agent.typical_gap == pytest.approx(big_agent.typical_gap / 1000, rel=0.05)
+    assert np.allclose(small_agent.predict_proba(states), big_agent.predict_proba(states), atol=0.02)
+    assert small_agent.predict_proba(states).max(axis=1).min() > 0.5       # not stuck at one third
+
+
+def test_unit_typical_gap_known_values():
+    q_values = pd.DataFrame({0.0: [1.0, 5.0, 2.0], 0.5: [3.0, 5.0, 2.5], 1.0: [2.0, 5.0, 4.5]})
+    assert rl_agent._typical_gap(q_values) == pytest.approx(1.5)       # leads of 1 and 2; the tied row is left out
+    assert rl_agent._typical_gap(pd.DataFrame({0.0: [1.0], 1.0: [1.0]})) == 1.0      # nobody leads
+    assert rl_agent._typical_gap(pd.DataFrame({0.0: [1.0, 2.0]})) == 1.0             # one action
+
+
+def test_unit_fallback_share_known_values():
+    rows = [(x, action, action, x, True) for x in (0.0, 1.0) for action in ACTIONS]
+    agent = rl_agent.fit_q_agent(toy_transitions(rows), ["x"], ACTIONS, PARAMS, random_state=0)
+    states = pd.DataFrame({"x": [0.0, 1.0]})
+    top = agent.predict_proba(states).max(axis=1)
+    assert rl_agent.fallback_share(agent, states, min_probability=float(top.min()) - 0.01) == 0.0
+    assert rl_agent.fallback_share(agent, states, min_probability=1.01) == 1.0
+    with pytest.raises(ValueError, match="No states given"):
+        rl_agent.fallback_share(agent, states.iloc[0:0], min_probability=0.6)
+
+
+def test_unit_value_carries_past_a_transition_that_is_not_done():
+    # Same data, one flag: where the data just stops (done False) the next state's value still counts.
+    def best_value(done: bool) -> float:
+        rows = [(0.0, 0.0, 0.0, 1.0, done), (1.0, 0.0, 1.0, 1.0, True)]
+        agent = rl_agent.fit_q_agent(toy_transitions(rows), ["x"], [0.0], {**PARAMS, "gamma": 0.9}, random_state=0)
+        return float(agent.q_values(pd.DataFrame({"x": [0.0]})).iloc[0, 0])
+    assert best_value(done=True) == pytest.approx(0.0, abs=0.05)
+    assert best_value(done=False) == pytest.approx(0.9, abs=0.05)
+
+
+def test_unit_estimator_settings_reach_the_regressor():
+    rows = [(x, action, action, x, True) for x in (0.0, 1.0) for action in ACTIONS]
+    agent = rl_agent.fit_q_agent(toy_transitions(rows), ["x"], ACTIONS, PARAMS, random_state=0)
+    assert agent.regressor.early_stopping is False
+    assert agent.regressor.n_iter_ == PARAMS["estimator"]["max_iter"]      # every round runs in full
 
 
 # ---------- the agent in the pipeline ----------
@@ -257,3 +275,9 @@ def test_unit_median_seed_known_values():
     assert rl_agent.median_seed({5: 0.2}) == 5
     with pytest.raises(ValueError, match="No seed scores given"):
         rl_agent.median_seed({})
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_unit_median_seed_raises_on_a_score_that_is_not_finite(bad):
+    with pytest.raises(ValueError, match=r"Seeds \[1\] have a score that is not a finite number"):
+        rl_agent.median_seed({0: 0.1, 1: bad, 2: 0.3})

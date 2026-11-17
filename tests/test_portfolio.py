@@ -229,6 +229,61 @@ def test_unit_best_action_tie_goes_to_the_smaller_action():
     assert (table["best_action"].iloc[:-2] == 0.0).all()
 
 
+def flat_then_jump() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Flat prices, except SPY (40% of the portfolio) jumps 10% on 17 Jan 2024."""
+    days = pd.bdate_range("2024-01-01", "2024-02-02", name="date")
+    close = pd.DataFrame(100.0, index=days, columns=TICKERS)
+    close.loc["2024-01-17":, "SPY"] = 110.0
+    return close, pd.DataFrame(1_000_000.0, index=days, columns=TICKERS)
+
+
+def test_unit_realised_rewards_known_value_without_trades():
+    # A do-nothing run pays no costs and never falls: its reward is the window return, 0.4 x 0.10 = 0.04.
+    close, volume = flat_then_jump()
+    cfg = make_cfg()
+    daily, decisions = portfolio.simulate(close, volume, pd.DataFrame(index=close.index), TARGET, lambda row: 0.0,
+                                          "2024-01-01", "2024-02-02", cfg)
+    rewards = portfolio.realised_rewards(daily, decisions, close, volume, TARGET, cfg)
+    # Decisions on Fridays 5, 12, 19, 26 Jan and 2 Feb. The window of 12 Jan runs 16 Jan to 22 Jan: it holds the jump.
+    assert rewards.name == "reward" and list(rewards.index) == list(decisions.index)
+    assert rewards.loc["2024-01-12"] == pytest.approx(0.04)
+    assert rewards.loc["2024-01-05"] == pytest.approx(0.0)
+    assert rewards.loc["2024-01-19"] == pytest.approx(0.0)
+    assert rewards.iloc[-2:].isna().all()               # no complete window at the end of the data
+
+
+def test_unit_realised_rewards_charge_the_trade_the_run_made():
+    # After the jump SPY is overweight. A run that rebalances fully on 19 Jan pays for that trade in its reward.
+    # Prices are flat afterwards and the portfolio sits at its high, so the cost counts twice: once as the cost,
+    # once (x penalty_lambda, 1.0 here) as the drop below the previous high that paying it causes.
+    close, volume = flat_then_jump()
+    cfg = make_cfg()
+    daily, decisions = portfolio.simulate(close, volume, pd.DataFrame(index=close.index), TARGET,
+                                          lambda row: 1.0 if row.name == pd.Timestamp("2024-01-19") else 0.0,
+                                          "2024-01-01", "2024-02-02", cfg)
+    rewards = portfolio.realised_rewards(daily, decisions, close, volume, TARGET, cfg)
+    charged = daily["cost_paid"].loc["2024-01-22"]       # the trade decided on Friday 19 executes on Monday 22
+    assert charged > 0
+    assert rewards.loc["2024-01-19"] == pytest.approx(-charged * (1 + cfg["portfolio"]["reward"]["penalty_lambda"]))
+    assert rewards.loc["2024-01-12"] == pytest.approx(0.04)      # the week before is untouched by the later trade
+
+
+def test_integration_labels_are_the_best_of_the_rewards_the_agent_is_paid():
+    # One reward function: where a run took the labelled best action, no other run earned more on that date.
+    close, volume = make_prices(periods=60)
+    cfg, empty = make_cfg(), pd.DataFrame(index=close.index)
+    by_action = {}
+    for action in cfg["portfolio"]["actions"]:
+        def policy(row, action=action):
+            return action if row.name == pd.Timestamp("2024-02-02") else 0.0
+        daily, decisions = portfolio.simulate(close, volume, empty, TARGET, policy, "2024-01-01", "2024-03-22", cfg)
+        by_action[action] = portfolio.realised_rewards(daily, decisions, close, volume, TARGET, cfg).loc["2024-02-02"]
+    daily, decisions = portfolio.simulate(close, volume, empty, TARGET, lambda row: 0.0, "2024-01-01", "2024-03-22",
+                                          cfg)
+    label = portfolio._labels(daily, decisions, close, volume, TARGET, cfg).loc["2024-02-02"]
+    assert by_action[label] == pytest.approx(max(by_action.values()), abs=1e-12)
+
+
 def test_unit_best_action_is_full_rebalance_before_a_crash_in_the_overweight_etf():
     # SPY jumps 50% (weight 0.40 -> 0.50), then falls 40% in the next window: going back to target loses less.
     days = pd.bdate_range("2024-01-01", "2024-01-31", name="date")
