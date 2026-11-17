@@ -128,3 +128,52 @@ def test_unit_walk_forward_scores_one_row_per_window(monkeypatch: pytest.MonkeyP
         selection.walk_forward_scores(
             table.assign(target_action=float("nan")), (close, volume, pd.DataFrame(index=days)), cfg, model_params,
         )
+
+
+def _grid_config() -> dict:
+    """Return a two-parameter grid and a fixed model setting."""
+    return {"problem": {"problem_type": "classification"},
+            "model": {"params": {"max_iter": 1000}},
+            "selection": {"grid": {"C": [.1, 1], "class_weight": [None, "balanced"]}}}
+
+
+def test_unit_grid_picks_the_highest_median(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Try exactly the Cartesian product and rank by median, not by the largest score."""
+    scores = Mock(side_effect=[
+        pd.DataFrame({"max_drawdown_reduction": [0.0, 0.0, 1.0]}),
+        pd.DataFrame({"max_drawdown_reduction": [.1, .1, .1]}),
+        pd.DataFrame({"max_drawdown_reduction": [.2, .2, .2]}),
+        pd.DataFrame({"max_drawdown_reduction": [.3, .3, -.9]}),
+    ])
+    monkeypatch.setattr(selection, "walk_forward_scores", scores)
+    best, trials = selection.grid_search(pd.DataFrame(), (), _grid_config())
+    assert list(zip(trials["C"], trials["class_weight"])) == [
+        (.1, None), (.1, "balanced"), (1, None), (1, "balanced")]
+    assert trials["median_max_drawdown_reduction"].tolist() == pytest.approx([0, .1, .2, .3])
+    assert best == {"max_iter": 1000, "C": 1, "class_weight": "balanced"}
+    assert scores.call_count == 4
+
+
+def test_unit_grid_logs_every_try(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Record every grid trial under the tracking prefix and keep the first tie."""
+    scores = pd.DataFrame({"max_drawdown_reduction": [.02, .01]})
+    monkeypatch.setattr(selection, "walk_forward_scores", Mock(return_value=scores))
+    log = Mock()
+    monkeypatch.setattr(selection.tracking, "log_metrics", log)
+    run = object()
+    best, _ = selection.grid_search(pd.DataFrame(), (), _grid_config(), run)
+    assert best["C"] == .1 and best["class_weight"] is None
+    assert [call.args[1]["trial"] for call in log.call_args_list] == [1, 2, 3, 4]
+    assert all(call.args[0] is run and call.kwargs["prefix"] == "grid/" for call in log.call_args_list)
+
+
+@pytest.mark.parametrize("grid,message", [
+    ({}, "nonempty"), ({"C": []}, "nonempty"), ({"typo": [1]}, "Unsupported"),
+    ({"random_state": [0]}, "Unsupported"),
+])
+def test_unit_grid_raises_for_bad_parameters(grid: dict, message: str) -> None:
+    """Reject invalid grids before attempting any candidate."""
+    cfg = _grid_config()
+    cfg["selection"]["grid"] = grid
+    with pytest.raises(ValueError, match=message):
+        selection.grid_search(pd.DataFrame(), (), cfg)

@@ -2,11 +2,14 @@
 
 import logging
 from collections.abc import Callable
+from itertools import product
+from math import isfinite
 
 import pandas as pd
+from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
 
-from src import evaluate, features, portfolio, train
+from src import evaluate, features, portfolio, tracking, train
 
 logger = logging.getLogger(__name__)
 
@@ -143,3 +146,39 @@ def walk_forward_scores(table: pd.DataFrame, market_data: tuple, cfg: dict, mode
         )
         rows.append(_score_window(model, columns, market_data, score_dates, cfg))
     return pd.DataFrame(rows)
+
+
+def grid_search(table: pd.DataFrame, market_data: tuple, cfg: dict, run: object = None) -> tuple[dict, pd.DataFrame]:
+    """Rank the configured parameter combinations on the training years.
+
+    Inputs: Decision table, market data, project configuration and optional W&B run.
+    Outputs: Best full parameter set and one row per attempted combination.
+    Why: Pick the highest median walk-forward score before looking at validation.
+    Raises: ValueError for an empty grid, an unsupported parameter or a nonfinite score.
+    """
+    grid = cfg["selection"]["grid"]
+    if not grid or any(not isinstance(values, (tuple, list)) or not values for values in grid.values()):
+        raise ValueError("selection.grid must specify a nonempty list for every parameter.")
+    estimator = Ridge() if cfg["problem"]["problem_type"] == "regression" else train.ActionClassifier()
+    unknown = set(grid).difference(estimator.get_params()).union({"random_state"}.intersection(grid))
+    if unknown:
+        raise ValueError(f"Unsupported selection.grid parameter(s): {', '.join(sorted(unknown))}.")
+
+    defaults = cfg["model"]["params"]
+    trials = []
+    best_params = defaults.copy()
+    best_score = -float("inf")
+    for index, combination in enumerate(product(*grid.values()), 1):
+        overrides = dict(zip(grid, combination))
+        params = {**defaults, **overrides}
+        scores = walk_forward_scores(table, market_data, cfg, params)["max_drawdown_reduction"]
+        score = float(scores.median(skipna=False))
+        if not isfinite(score):
+            raise ValueError(f"Grid trial {index} produced no finite median walk-forward score.")
+        metrics = {"trial": index, "median_max_drawdown_reduction": score}
+        tracking.log_metrics(run, metrics, prefix="grid/")
+        trials.append({**overrides, **metrics})
+        if score > best_score:
+            best_params, best_score = params, score
+    logger.info("Grid search scored %d trials; best median drawdown reduction %.4f", len(trials), best_score)
+    return best_params, pd.DataFrame(trials)
