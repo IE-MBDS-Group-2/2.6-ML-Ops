@@ -216,7 +216,7 @@ def matched_exposure_weights(target: pd.Series, agent_daily: pd.DataFrame, equit
     return mix
 
 
-def _review_dates(close_wide: pd.DataFrame, start: str, end: str) -> pd.DatetimeIndex:
+def review_dates(close_wide: pd.DataFrame, start: str, end: str) -> pd.DatetimeIndex:
     """The decision dates of a run, exactly as portfolio.simulate picks them.
 
     Inputs:  close_wide (its index is the calendar); start and end (YYYY-MM-DD).
@@ -227,7 +227,7 @@ def _review_dates(close_wide: pd.DataFrame, start: str, end: str) -> pd.Datetime
     return portfolio.decision_dates(days, start, end)
 
 
-def _target_path(close_wide: pd.DataFrame, target: pd.Series, decisions: pd.DatetimeIndex) -> pd.Series:
+def target_path(close_wide: pd.DataFrame, target: pd.Series, decisions: pd.DatetimeIndex) -> pd.Series:
     """Values of a portfolio held exactly at target every day, cost-free, on the decision dates.
 
     Inputs:  close_wide; target weights; decisions.
@@ -282,8 +282,8 @@ def run_challengers(market_data: tuple, target: pd.Series, cfg: dict, start: str
              results.attrs["guards"] holds the full guard_report per rule, for select_challenger.
     Why:     the agent must beat the best simple rule, and only rules within the mandate count (README).
     """
-    decisions = _review_dates(market_data[0], start, end)
-    target_weekly = _target_path(market_data[0], target, decisions)
+    decisions = review_dates(market_data[0], start, end)
+    target_weekly = target_path(market_data[0], target, decisions)
     names = [name for name in RULES if name != MATCHED_EXPOSURE or agent_daily is not None]
     if agent_daily is None:
         logger.info("Rule %s skipped: it needs the agent's daily run (agent_daily)", MATCHED_EXPOSURE)
