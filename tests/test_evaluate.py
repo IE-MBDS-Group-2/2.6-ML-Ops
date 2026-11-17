@@ -1,5 +1,7 @@
 """Tests for src/evaluate.py: model metrics, portfolio metrics and the quality gate."""
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -228,6 +230,15 @@ def test_unit_cost_ratio_when_the_baseline_trades_nothing():
     baseline = metrics(annual_trading_cost=0.0)
     assert evaluate.guard_report(metrics(annual_trading_cost=0.0), baseline, LIMITS)["cost_ratio"]["passed"] is True
     assert evaluate.guard_report(metrics(annual_trading_cost=1e-6), baseline, LIMITS)["cost_ratio"]["passed"] is False
+
+
+def test_unit_guard_report_is_strict_json_when_the_baseline_trades_nothing():
+    # An infinite cost ratio would be written as Infinity, which strict JSON readers reject: report null, a failure.
+    report = evaluate.guard_report(metrics(annual_trading_cost=1e-6), metrics(annual_trading_cost=0.0), LIMITS)
+    assert report["cost_ratio"]["value"] is None and report["cost_ratio"]["passed"] is False
+    json.dumps(report, allow_nan=False)  # raises ValueError on Infinity or NaN
+    reasons = evaluate.release_decision(True, report)["reasons"]
+    assert len(reasons) == 1 and "cost_ratio" in reasons[0] and "infinite" in reasons[0]
 
 
 def test_unit_release_decision_lists_every_failed_reason():
