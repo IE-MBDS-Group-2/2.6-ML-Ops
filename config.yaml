@@ -159,6 +159,10 @@ guards:                          # README "Goal and success metrics"; reported, 
   max_cost_ratio: 2.0            # annual trading cost no more than 2 x the baseline's
   max_tracking_error: 0.012      # X = 2 x today's rule on validation 2020-21 (0.0059); agreed with Miguel (#64)
 
+robustness:                      # README robustness checks; reported, never gated
+  bootstrap_draws: 1999          # ESTIMATE: block-bootstrap draws for each challenger comparison
+  bootstrap_block_weeks: 4       # ESTIMATE: weeks per block, so short-range dependence is kept
+
 challengers:                     # README simple-rule challengers (team ASSUMPTIONS); never tuned on validation
   bands: [0.025, 0.015]
   persistent_drift: {min_assets: 2, band: 0.025, days: 5}

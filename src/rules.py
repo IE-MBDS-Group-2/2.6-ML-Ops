@@ -112,7 +112,8 @@ def _persistent_policy(target: pd.Series, close_wide: pd.DataFrame, cfg: dict) -
     Why:     the README's multi-asset, multi-day trigger: ignore a drift that lasts one day only.
              Past weights are rebuilt from the decision day's weights and prices (w_d ~ w_t x P_d / P_t), which
              is exact for weekly reviews: the last trade is at the close of the day after the previous decision,
-             before the window starts.
+             before the window starts. In a holiday week (fewer trading days) the window can reach back before
+             that trade, so its first day uses the rebuilt weights, not the ones held then.
     """
     rule = cfg["challengers"]["persistent_drift"]
     tickers = list(target.index)
@@ -271,12 +272,14 @@ def _result_row(metrics: dict, guards: dict) -> dict:
 
 
 def run_challengers(market_data: tuple, target: pd.Series, cfg: dict, start: str, end: str,
-                    agent_daily: pd.DataFrame | None = None) -> pd.DataFrame:
+                    agent_daily: pd.DataFrame | None = None,
+                    daily_values: dict[str, pd.Series] | None = None) -> pd.DataFrame:
     """Run every simple rule over [start, end] and check each against today's rule with the README's guards.
 
     Inputs:  market_data, (close_wide, volume_wide, market features) as for portfolio.simulate; target weights;
              cfg, the full config (reads challengers, portfolio, costs, guards); start and end (YYYY-MM-DD);
              agent_daily, the agent's daily frame over the same dates (matched_exposure is skipped without it).
+             daily_values, an optional mapping to receive daily values for the robustness audit.
     Outputs: one row per rule (index "rule", in RULES order): max_drawdown, annual_return, annual_volatility,
              sharpe, annual_trading_cost, tracking_error, guard_<name> per guard and guards_passed.
              results.attrs["guards"] holds the full guard_report per rule, for select_challenger.
@@ -290,6 +293,8 @@ def run_challengers(market_data: tuple, target: pd.Series, cfg: dict, start: str
     metrics = {}
     for name in names:
         daily = _simulate_rule(name, market_data, target, decisions, cfg, (start, end), agent_daily)
+        if daily_values is not None:
+            daily_values[name] = daily["value"]
         metrics[name] = evaluate.portfolio_metrics(daily["value"], daily["cost_paid"])
         metrics[name]["tracking_error"] = evaluate.tracking_error(daily["value"].reindex(decisions), target_weekly,
                                                                   WEEKS_PER_YEAR)

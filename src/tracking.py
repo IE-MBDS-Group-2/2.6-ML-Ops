@@ -33,7 +33,8 @@ def _login(env: dict[str, str]) -> None:
     Inputs:  env, the values from config.load_env.
     Outputs: None.
     Why:     load_env reads .env into a dictionary, not into the process environment where W&B looks for the
-             key; without this, an online run would ask for a key even though .env holds one.
+             key; without this, an online run would ask for a key even though .env holds one. Only called for
+             online runs: logging in is a network call, and an offline run syncs later with `wandb sync`.
     """
     if env["WANDB_API_KEY"]:
         wandb.login(key=env["WANDB_API_KEY"])
@@ -53,7 +54,8 @@ def start_run(cfg: dict, env: dict[str, str], job_type: str = "train") -> wandb.
     if mode == "disabled" or not settings["enabled"]:
         logger.info("Tracking off (WANDB_MODE %s, tracking.enabled %s): no W&B run", mode, settings["enabled"])
         return None
-    _login(env)
+    if mode == "online":
+        _login(env)
     run = wandb.init(
         project=settings["project"],
         entity=env["WANDB_ENTITY"] or None,
@@ -173,15 +175,20 @@ def download_model(env: dict[str, str], project: str, name: str, alias: str) -> 
              name, the model artifact's name; alias, which version to fetch (normally "prod").
     Outputs: the local path of the downloaded .joblib file.
     Why:     api.py serves the model a person promoted in the W&B UI; no training run is needed to fetch it.
-    Raises:  FileNotFoundError if no version has that alias, or the download holds no .joblib file.
+    Raises:  FileNotFoundError if no version has that alias, W&B cannot be reached or refuses the key, or the
+             download holds no .joblib file. One error type, so api.py has one case to catch: serve the rule only.
     """
     address = f"{env['WANDB_ENTITY']}/{project}/{name}:{alias}"
-    api = wandb.Api(api_key=env["WANDB_API_KEY"] or None)
     try:
+        api = wandb.Api(api_key=env["WANDB_API_KEY"] or None)
         folder = Path(api.artifact(address).download())
     except ValueError as error:
         raise FileNotFoundError(f"Model {address} not found in W&B: no version has the alias {alias!r}. Promote a "
                                 f"model to {alias!r} in the W&B UI, or set MODEL_SOURCE=local.") from error
+    except wandb.errors.Error as error:
+        raise FileNotFoundError(f"Model {address} could not be downloaded from W&B ({type(error).__name__}). "
+                                "Check WANDB_API_KEY, WANDB_ENTITY and the network, or set MODEL_SOURCE=local."
+                                ) from error
     model_file = _find_joblib(folder, address)
     logger.info("Downloaded model %s to %s", address, model_file)
     return model_file

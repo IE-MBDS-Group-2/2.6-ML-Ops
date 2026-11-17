@@ -34,7 +34,8 @@ from sklearn.pipeline import Pipeline
 
 from src import clean_data, config, evaluate, features, infer, load_data
 from src import logger as log_setup
-from src import portfolio, rl_agent, rules, tracking, train, utils, validate
+from src import (portfolio, rl_agent, robustness, rules, tracking, train,
+                 utils, validate)
 
 logger = logging.getLogger(__name__)
 
@@ -316,12 +317,13 @@ def _portfolio_report(daily: pd.DataFrame, market_data: tuple, cfg: dict) -> dic
     return report
 
 
-def _period_metrics(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, split: str) -> tuple:
+def _period_metrics(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, split: str,
+                    challenger_values: dict[str, pd.Series] | None = None) -> tuple:
     """The model against today's rule and the simple-rule challengers over one period.
 
     Inputs:  model and its feature columns; market_data; cfg, the full config; split, "validation" or "test".
-    Outputs: (metrics, challengers): metrics holds agent, baseline, the gate metric and whether it is met,
-             and the guards; challengers is the rules.run_challengers table for the same dates.
+    Outputs: metrics, challenger table and the daily agent and baseline paths.
+             When requested, challenger_values receives the daily challenger values.
     Why:     validation and the one-time test audit are measured by exactly the same code.
     """
     agent_daily, baseline_daily = _validation_paths(model, columns, market_data, cfg, split)
@@ -335,25 +337,26 @@ def _period_metrics(model: Pipeline, columns: list[str], market_data: tuple, cfg
     }
     challengers = rules.run_challengers(
         market_data, _target_weights(cfg), cfg, str(agent_daily.index[0].date()),
-        str(agent_daily.index[-1].date()), agent_daily)
-    return metrics, challengers
+        str(agent_daily.index[-1].date()), agent_daily, challenger_values)
+    return metrics, challengers, (agent_daily, baseline_daily)
 
 
-def _test_audit(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, chosen: str) -> dict:
+def _test_audit(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, chosen: str) -> tuple[dict, dict]:
     """The one-time look at the test years, only for a model that passed the gate on validation.
 
     Inputs:  model and its feature columns; market_data; cfg; chosen, the simple rule selected on validation.
-    Outputs: the test metrics plus "release": the go / no-go and every reason against (README).
+    Outputs: test metrics and release decision, plus the separate robustness diagnostics.
     Why:     the test years stay sealed until a model has earned the look; the decision is made once.
     """
-    metrics, challengers = _period_metrics(model, columns, market_data, cfg, "test")
+    challenger_values = {}
+    metrics, challengers, paths = _period_metrics(model, columns, market_data, cfg, "test", challenger_values)
     agent_drawdown = metrics["agent"]["max_drawdown"]
     rule_drawdown = float(challengers.loc[chosen, "max_drawdown"])
     metrics["guards"]["challenger"] = {"value": agent_drawdown, "limit": rule_drawdown,
                                        "passed": bool(agent_drawdown > rule_drawdown)}
     metrics["release"] = evaluate.release_decision(metrics["gate"]["met"], metrics["guards"])
     logger.info("Test audit done: %s", "release" if metrics["release"]["release"] else "do not release")
-    return metrics
+    return metrics, robustness.test_period_diagnostics(*paths, challenger_values, cfg)
 
 
 def _numbers(metrics: dict, prefix: str = "") -> dict[str, float]:
@@ -434,7 +437,7 @@ def _validation_report(fitted: tuple, market_data: tuple, cfg: dict, paths: dict
              challengers table and sends the numbers to the tracker.
     """
     model, columns, scores = fitted
-    metrics, challengers = _period_metrics(model, columns, market_data, cfg, "validation")
+    metrics, challengers, _daily_paths = _period_metrics(model, columns, market_data, cfg, "validation")
     metrics.update(scores)
     chosen = rules.select_challenger(challengers, challengers.attrs["guards"])
     metrics["challenger"] = {"name": chosen, "max_drawdown": float(challengers.loc[chosen, "max_drawdown"])}
@@ -457,13 +460,41 @@ def _write_recommendations(approved: Pipeline | None, columns: list[str], cfg: d
     return len(recommendations)
 
 
+def _write_robustness(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, path: Path,
+                      tracker: object, test_diagnostics: dict) -> None:
+    """Write historical and validation diagnostics and attach the test audit when available.
+
+    Inputs: Fitted model and columns, market frames, configuration, report path, tracker and test diagnostics.
+    Outputs: Robustness JSON and tracking table.
+    Why: Record diagnostics without using them to change the validation gate or release decision.
+    """
+    validation_end = cfg["split"]["val_end"]
+    history = tuple(frame.loc[:validation_end] for frame in market_data)
+    ceiling = robustness.feasibility_ceiling(
+        history, _target_weights(cfg), cfg, cfg["portfolio"]["first_decision_date"], validation_end)
+
+    def run_policy(settings: dict) -> pd.DataFrame:
+        """Return aligned validation values for the selected trading cost settings."""
+        agent, baseline = _validation_paths(model, columns, history, settings)
+        return pd.DataFrame({"agent_value": agent["value"], "baseline_value": baseline["value"]})
+
+    sensitivity = robustness.cost_sensitivity(run_policy, cfg).astype(object)
+    results = {
+        "feasibility_ceiling": ceiling,
+        "validation_cost_sensitivity": sensitivity.where(sensitivity.notna(), None).to_dict(orient="records"),
+        "test": test_diagnostics,
+    }
+    # This pipeline fits one candidate. Grid search will supply its complete trial count when integrated.
+    robustness.report_robustness(results, 1, path, tracker)
+
+
 def run(cfg: dict, tracker: object = None) -> dict:
     """The pipeline: data -> decision table -> model -> gate, guards and challengers -> recommendations.
 
     Inputs:  cfg, the full config dictionary (see config.load_config); tracker, the run from
              tracking.start_run, or None when tracking is off (every tracking call then does nothing).
     Outputs: the metrics dictionary, also written to paths.metrics. Also writes the clean data, the
-             challengers table and the predictions, and the model only if it passed the gate.
+             challengers table, robustness report and predictions, and the model only if it passed the gate.
     Why:     one function that calls every module in order; no cleaning or model logic of its own.
     Raises:  FileNotFoundError, OSError, KeyError, ValueError from the steps it calls.
     """
@@ -482,9 +513,11 @@ def run(cfg: dict, tracker: object = None) -> dict:
     # 4. On validation: the quality gate, the guards and the simple-rule challengers.
     metrics, chosen = _validation_report((model, columns, scores), market_data, cfg, paths, tracker)
     # 5. Only a model that passed the gate gets the one-time test audit, and is saved and registered.
+    test_diagnostics = {"status": "sealed", "reason": "validation_gate_not_met"}
     if metrics["gate"]["met"]:
-        metrics["test"] = _test_audit(model, columns, market_data, cfg, chosen)
+        metrics["test"], test_diagnostics = _test_audit(model, columns, market_data, cfg, chosen)
         tracking.log_metrics(tracker, _numbers(metrics["test"]), prefix="test/")
+    _write_robustness(model, columns, market_data, cfg, paths["robustness"], tracker, test_diagnostics)
     approved = _keep_or_drop_model(model, metrics, paths, cfg, tracker)
     utils.save_json(metrics, paths["metrics"])
     # 6. Recommend on the latest inference data: the approved model, or today's rule if there is none.
