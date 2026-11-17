@@ -133,7 +133,7 @@ def run_benchmarks(market_data: tuple, cfg: dict, start: str, end: str) -> pd.Da
     train_returns = training_prices.pct_change(fill_method=None).iloc[1:]
     settings = cfg["benchmarks"]
     bounded_market = tuple(frame.loc[:end] for frame in market_data)
-    decisions = portfolio.decision_dates(bounded_market[0].index, start, end)
+    decisions = portfolio.decision_dates(bounded_market[0].index, start, end, portfolio.review_frequency(cfg))
     results = []
     for method in settings["methods"]:
         target = fit_weights(train_returns, method, settings)
