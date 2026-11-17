@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 RULES: tuple[str, ...] = ("current", "band_2_5", "band_1_5", "persistent_drift", "asymmetric", "matched_exposure")
 MATCHED_EXPOSURE = "matched_exposure"  # needs the agent's daily run
-WEEKS_PER_YEAR = 52                    # tracking error is measured on weekly values, one per decision date
 _NO_DRIFT = 1e-9                       # weights this close to target count as on target
 
 Policy = Callable[[pd.Series], float]
@@ -111,9 +110,10 @@ def _persistent_policy(target: pd.Series, close_wide: pd.DataFrame, cfg: dict) -
     Outputs: the policy.
     Why:     the README's multi-asset, multi-day trigger: ignore a drift that lasts one day only.
              Past weights are rebuilt from the decision day's weights and prices (w_d ~ w_t x P_d / P_t), which
-             is exact for weekly reviews: the last trade is at the close of the day after the previous decision,
-             before the window starts. In a holiday week (fewer trading days) the window can reach back before
-             that trade, so its first day uses the rebuilt weights, not the ones held then.
+             is exact for weekly and monthly reviews: the last trade is at the close of the day after the
+             previous decision, before the window starts. With daily reviews the window holds earlier trades, so
+             the rebuilt weights are an approximation. In a holiday week (fewer trading days) the window can
+             reach back before that trade, so its first day uses the rebuilt weights, not the ones held then.
     """
     rule = cfg["challengers"]["persistent_drift"]
     tickers = list(target.index)
@@ -217,15 +217,15 @@ def matched_exposure_weights(target: pd.Series, agent_daily: pd.DataFrame, equit
     return mix
 
 
-def review_dates(close_wide: pd.DataFrame, start: str, end: str) -> pd.DatetimeIndex:
+def review_dates(close_wide: pd.DataFrame, start: str, end: str, cfg: dict) -> pd.DatetimeIndex:
     """The decision dates of a run, exactly as portfolio.simulate picks them.
 
-    Inputs:  close_wide (its index is the calendar); start and end (YYYY-MM-DD).
+    Inputs:  close_wide (its index is the calendar); start and end (YYYY-MM-DD); cfg (reads rebalancing.review).
     Outputs: the decision dates inside [start, end].
     Why:     the rules' calendar and the tracking-error dates must be the simulator's own.
     """
     days = close_wide.index[close_wide.index <= pd.Timestamp(end)]
-    return portfolio.decision_dates(days, start, end)
+    return portfolio.decision_dates(days, start, end, portfolio.review_frequency(cfg))
 
 
 def target_path(close_wide: pd.DataFrame, target: pd.Series, decisions: pd.DatetimeIndex) -> pd.Series:
@@ -277,7 +277,8 @@ def run_challengers(market_data: tuple, target: pd.Series, cfg: dict, start: str
     """Run every simple rule over [start, end] and check each against today's rule with the README's guards.
 
     Inputs:  market_data, (close_wide, volume_wide, market features) as for portfolio.simulate; target weights;
-             cfg, the full config (reads challengers, portfolio, costs, guards); start and end (YYYY-MM-DD);
+             cfg, the full config (reads challengers, portfolio, costs, guards, rebalancing.review); start and
+             end (YYYY-MM-DD);
              agent_daily, the agent's daily frame over the same dates (matched_exposure is skipped without it).
              daily_values, an optional mapping to receive daily values for the robustness audit.
     Outputs: one row per rule (index "rule", in RULES order): max_drawdown, annual_return, annual_volatility,
@@ -285,8 +286,10 @@ def run_challengers(market_data: tuple, target: pd.Series, cfg: dict, start: str
              results.attrs["guards"] holds the full guard_report per rule, for select_challenger.
     Why:     the agent must beat the best simple rule, and only rules within the mandate count (README).
     """
-    decisions = review_dates(market_data[0], start, end)
-    target_weekly = target_path(market_data[0], target, decisions)
+    decisions = review_dates(market_data[0], start, end, cfg)
+    # tracking error reference: the target's values on the review dates, and reviews per year to annualise
+    reference = (target_path(market_data[0], target, decisions),
+                 portfolio.periods_per_year(portfolio.review_frequency(cfg)))
     names = [name for name in RULES if name != MATCHED_EXPOSURE or agent_daily is not None]
     if agent_daily is None:
         logger.info("Rule %s skipped: it needs the agent's daily run (agent_daily)", MATCHED_EXPOSURE)
@@ -296,8 +299,7 @@ def run_challengers(market_data: tuple, target: pd.Series, cfg: dict, start: str
         if daily_values is not None:
             daily_values[name] = daily["value"]
         metrics[name] = evaluate.portfolio_metrics(daily["value"], daily["cost_paid"])
-        metrics[name]["tracking_error"] = evaluate.tracking_error(daily["value"].reindex(decisions), target_weekly,
-                                                                  WEEKS_PER_YEAR)
+        metrics[name]["tracking_error"] = evaluate.tracking_error(daily["value"].reindex(decisions), *reference)
     guards = {name: evaluate.guard_report(metrics[name], metrics["current"], cfg["guards"]) for name in names}
     results = pd.DataFrame([_result_row(metrics[name], guards[name]) for name in names],
                            index=pd.Index(names, name="rule"))
