@@ -307,6 +307,19 @@ Then open `http://localhost:8000/health` (or `/docs`). Stop it with Ctrl+C.
 - **Size:** about 1.5 GB (the scientific stack, W&B, and the dev tools that share the lock file).
 - **Changing packages:** edit `environment.yml`, then run `conda-lock -f environment.yml -p linux-64` and commit both files.
 
+## Future work
+Five ideas, in the order I would take them. Each says what it is, why it is not done now and the first step.
+
+**Any universe, or a whole book.** *What:* accept any tickers, or a whole book of holdings, not only the five ETFs. *Why not now:* the model's inputs are per ticker (`w_SPY`, `drift_SPY`, `ret_4w_SPY` and so on), so its input has a fixed length and fixed column names. A model trained on these five cannot take a sixth ETF or a different one, and `data.tickers`, the target weights and the label would all change with the list. The asset-agnostic design removes this: describe each holding by features that do not carry its name (its own weight, drift, 4-week and 12-week return and volatility), add a few portfolio-level features (largest drift, drawdown, weeks since the last rebalance), and train one shared model on many assets. *First step:* write the feature table for this design on the same five ETFs, train it, and check that it reproduces the current gate result before any new ticker is added.
+
+**Continuous training.** *What:* retrain on new data on a schedule and replace the served model only when the new one passes the gate. *Why not now:* there is one frozen snapshot, Yahoo's data is for personal use only so a firm needs a licensed feed, and no model has passed the gate yet, so there is nothing to replace. *First step:* with a licensed feed in place, add a scheduled workflow that fetches and validates new prices, trains, runs the gate and registers the model in Weights & Biases. The `prod` alias must stay on the previous version when the gate fails.
+
+**Rolling target weights.** *What:* when the target weights are calculated (minimum variance, maximum Sharpe, mean-variance, risk parity), refit them on a moving window at each review instead of once. *Why not now:* today they are fitted once on the train years only, which keeps the test years sealed. A rolling fit must use only data known at each review date or it leaks the future, and because the labels depend on the target, every change of target means a retrain. *First step:* refit on the trailing years inside the walk-forward check, and report how much the targets move from one review to the next.
+
+**A stronger agent.** *What:* a richer reinforcement learning agent, for example more than three actions or a better reward. *Why not now:* there are only about 950 weekly decisions, and in our data the best action looks to be almost always 0.0 or 1.0 (open gaps 7 and 14), so a bigger model has little to learn from. *First step:* settle the open gaps first: reproduce the label split on the train years, run the feasibility check (a timing-only agent with perfect foresight) and decide whether to keep three actions.
+
+**Named portfolios.** *What:* several model portfolios, such as conservative, balanced and growth, each with its own targets, thresholds and gate. *Why not now:* each one needs its own target weights, labels, model and gate result, and the `prod` alias holds one model. The API request already has an optional `portfolio_id`, but nothing uses it to choose a model yet. *First step:* make a second configuration (target weights and gate) for one more portfolio, run the pipeline for it, and give its model its own alias.
+
 ## Repo structure
 ```text
 .
