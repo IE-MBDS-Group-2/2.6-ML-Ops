@@ -264,7 +264,8 @@ def _rule_decision(method: str, state: pd.DataFrame, close_wide: pd.DataFrame, t
                    cfg: dict) -> dict:
     """The chosen rule's answer; for smart with no model loaded, today's rule as the fallback (D8)."""
     row = state.iloc[0]
-    decisions = portfolio.decision_dates(close_wide.index, str(close_wide.index[0].date()), str(row.name.date()))
+    decisions = portfolio.decision_dates(close_wide.index, str(close_wide.index[0].date()), str(row.name.date()),
+                                         portfolio.review_frequency(cfg))
     policy = allocation.resolve_policy(method, None, target, decisions, close_wide, cfg)
     action = float(policy(row.drop(portfolio.RULE_ACTION_COLUMN)))
     fallback = method == SMART

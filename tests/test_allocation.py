@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src import allocation, config, features, portfolio, train
+from src import allocation, benchmarks, config, features, portfolio, train
 
 TICKERS = ["SPY", "EFA", "IEF", "GLD", "BIL"]
 POLICY = {"SPY": 0.40, "EFA": 0.20, "IEF": 0.30, "GLD": 0.05, "BIL": 0.05}
@@ -29,7 +29,7 @@ def make_cfg(calendar: str = "quarterly", band: float = 5) -> dict:
         "costs": {"aum": 100_000_000, "model": "flat", "flat": {"rate": 0.001}, "slippage": {"adv_window": 20}},
         "problem": {"target_column": "best_action", "id_column": "decision_date"},
         "benchmarks": {"methods": ["min_variance", "max_sharpe", "mean_variance", "risk_parity"],
-                       "risk_aversion": 3.0},
+                       "risk_aversion": 3.0, "cash_ticker": "BIL"},
     }
 
 
@@ -61,7 +61,7 @@ def fitted_model():
 
 def resolve(method: str, close: pd.DataFrame, cfg: dict, model=None):
     """allocation.resolve_policy on the decision dates of `close`, towards the policy target."""
-    decisions = portfolio.decision_dates(close.index, str(close.index[0].date()), str(close.index[-1].date()))
+    decisions = portfolio.decision_dates(close.index, str(close.index[0].date()), str(close.index[-1].date()), "weekly")
     return allocation.resolve_policy(method, model, TARGET, decisions, close, cfg)
 
 
@@ -79,7 +79,6 @@ def test_unit_defaults_reproduce_stage_2():
         assert policy(row) == expected
 
 
-@pytest.mark.skip(reason="Awaiting #63 (benchmarks.fit_weights) in dev")
 def test_unit_each_calculated_target_is_valid():
     returns = make_prices(periods=250)[0].pct_change().dropna()
     for method in ("min_variance", "max_sharpe", "mean_variance", "risk_parity"):
@@ -92,7 +91,7 @@ def test_unit_each_calculated_target_is_valid():
 def test_unit_calendar_and_band_equals_todays_rule():
     close, volume = make_prices()
     cfg = make_cfg("quarterly", 5)
-    decisions = portfolio.decision_dates(close.index, "2024-01-01", "2024-06-14")
+    decisions = portfolio.decision_dates(close.index, "2024-01-01", "2024-06-14", "weekly")
     market = pd.DataFrame(index=close.index)
     policies = (allocation.resolve_policy("calendar_and_band", None, TARGET, decisions, close, cfg),
                 portfolio.make_current_rule_policy(TARGET, decisions, cfg))
@@ -134,7 +133,6 @@ def test_unit_explain_three_known_states():
     assert fallback.endswith("No trade: every holding is within 2.0 points of target.")
 
 
-@pytest.mark.skip(reason="Awaiting #63 (benchmarks.fit_weights) in dev")
 def test_unit_calculated_target_falls_back_to_the_rule():
     returns = make_prices(periods=250)[0].pct_change().dropna()
     target = allocation.resolve_target("min_variance", make_cfg(), returns)
@@ -173,11 +171,21 @@ def test_unit_smart_without_a_model_uses_the_rule():
     assert smart(state_row("2024-05-10", {"SPY": 0.01, "IEF": -0.01})) == 0.0
 
 
-def test_unit_calculated_target_waits_for_benchmarks():
+def test_unit_calculated_target_needs_every_ticker_in_train_returns():
     with pytest.raises(ValueError, match="train_returns"):
         allocation.resolve_target("min_variance", make_cfg(), None)
-    with pytest.raises(NotImplementedError, match="#63"):
-        allocation.resolve_target("min_variance", make_cfg(), alternating_returns())
+    with pytest.raises(ValueError, match="no column for \\['GLD'\\]"):
+        allocation.resolve_target("min_variance", make_cfg(), alternating_returns().drop(columns="GLD"))
+
+
+def test_unit_calculated_target_matches_the_benchmark_report():
+    """resolve_target and the benchmark report call fit_weights with the same settings: one answer."""
+    returns = make_prices(periods=250)[0].pct_change().dropna()
+    shuffled = returns[TICKERS[::-1]]
+    target = allocation.resolve_target("max_sharpe", make_cfg(), shuffled)
+    expected = benchmarks.fit_weights(returns, "max_sharpe", make_cfg()["benchmarks"])
+    pd.testing.assert_series_equal(target, expected)
+    assert target["BIL"] == 0.0
 
 
 def test_unit_explain_halfway_and_full_without_a_breach():

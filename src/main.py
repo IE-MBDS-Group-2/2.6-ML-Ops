@@ -277,7 +277,7 @@ def _validation_paths(model: Pipeline, columns: list[str], market_data: tuple, c
     target = _target_weights(cfg)
     start, end = _period(cfg, split)
     start = str(close_wide.index[close_wide.index >= pd.Timestamp(start)][0].date())
-    rule = portfolio.make_current_rule_policy(target, rules.review_dates(close_wide, start, end), cfg)
+    rule = portfolio.make_current_rule_policy(target, rules.review_dates(close_wide, start, end, cfg), cfg)
     agent_daily, _ = portfolio.simulate(
         *market_data, target, _model_policy(model, columns), start, end, cfg)
     baseline_daily, _ = portfolio.simulate(*market_data, target, rule, start, end, cfg)
@@ -305,15 +305,15 @@ def _portfolio_report(daily: pd.DataFrame, market_data: tuple, cfg: dict) -> dic
     """Risk, return and cost of one simulated run, plus its tracking error to the target weights.
 
     Inputs:  daily, a daily frame from portfolio.simulate; market_data; cfg (reads target_weights).
-    Outputs: evaluate.portfolio_metrics plus "tracking_error" (weekly values on the review dates).
+    Outputs: evaluate.portfolio_metrics plus "tracking_error" (values on the review dates).
     Why:     the guards need the same numbers for the model and for today's rule.
     """
     close_wide = market_data[0]
-    reviews = rules.review_dates(close_wide, str(daily.index[0].date()), str(daily.index[-1].date()))
+    reviews = rules.review_dates(close_wide, str(daily.index[0].date()), str(daily.index[-1].date()), cfg)
     report = evaluate.portfolio_metrics(daily["value"], daily["cost_paid"])
     report["tracking_error"] = evaluate.tracking_error(
         daily["value"].reindex(reviews), rules.target_path(close_wide, _target_weights(cfg), reviews),
-        rules.WEEKS_PER_YEAR)
+        portfolio.periods_per_year(portfolio.review_frequency(cfg)))
     return report
 
 
