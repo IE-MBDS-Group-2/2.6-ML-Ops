@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from src import config, evaluate, main, tracking, utils
+from src import config, evaluate, main, rl_agent, tracking, utils
 
 TICKERS = ["SPY", "EFA", "IEF", "GLD", "BIL"]
 
@@ -177,6 +177,57 @@ def test_integration_pipeline_writes_every_output(tmp_path, monkeypatch):
     significance = robustness["test"]["challenger_significance"]
     assert significance["status"] == "measured"
     assert set(significance["p_values"]) == set(significance["holm_adjusted"]) == set(challengers["rule"])
+
+
+def _small_rl(cfg: dict, model_type: str, enabled: bool = False) -> dict:
+    """Point the config at the reinforcement learning agent with settings small enough for a test."""
+    cfg["model"]["type"] = model_type
+    cfg["rl"].update(enabled=enabled, n_episodes=2, n_iterations=2, seeds=[0, 1, 2])
+    cfg["rl"]["estimator"]["max_iter"] = 10
+    return cfg
+
+
+def test_integration_pipeline_runs_the_rl_agent_when_model_type_is_fitted_q(tmp_path, monkeypatch):
+    """model.type fitted_q: one agent per seed, the median one goes through the gate, the audit and inference."""
+    cfg = _small_rl(_pipeline_setup(tmp_path, monkeypatch), "fitted_q")
+    _force_gate(monkeypatch, True)
+    registered = _record(monkeypatch, "log_model")
+    logged = _record(monkeypatch, "log_metrics")
+    metrics = main.run(cfg)
+    report = metrics["rl"]
+    assert metrics["model_type"] == "fitted_q" and "accuracy" not in metrics
+    assert set(report["seed_scores"]) == {"0", "1", "2"}
+    assert report["median_seed"] == rl_agent.median_seed({int(k): v for k, v in report["seed_scores"].items()})
+    assert report["median_score"] == report["seed_scores"][str(report["median_seed"])]
+    assert metrics["max_drawdown_reduction"] == pytest.approx(report["median_score"])    # the gate saw that agent
+    assert 0.0 <= report["fallback_share"] <= 1.0
+    assert "rl/fallback_share" in logged[0][0][1] and "rl/seed_scores/0" in logged[0][0][1]
+    assert registered[0][0][3]["model_type"] == "fitted_q"
+    assert isinstance(utils.load_model(tmp_path / cfg["paths"]["model"]), rl_agent.QAgent)
+    assert metrics["test"]["split"] == "test"
+    predictions = pd.read_csv(tmp_path / cfg["paths"]["predictions"])
+    assert set(predictions["recommendation"]) <= {0.0, 0.5, 1.0}
+    assert predictions["probability"].between(1 / 3, 1.0).all()
+
+
+def test_unit_rl_enabled_reports_the_agent_but_the_classifier_stays_the_candidate(tmp_path, monkeypatch):
+    cfg = _small_rl(_pipeline_setup(tmp_path, monkeypatch), "classifier", enabled=True)
+    _force_gate(monkeypatch, True)
+    metrics = main.run(cfg)
+    assert metrics["model_type"] == "classifier"
+    assert "accuracy" in metrics and set(metrics["rl"]["seed_scores"]) == {"0", "1", "2"}
+    assert not isinstance(utils.load_model(tmp_path / cfg["paths"]["model"]), rl_agent.QAgent)
+
+
+def test_unit_classifier_run_does_not_train_the_agent_unless_asked(tmp_path, monkeypatch):
+    cfg = _pipeline_setup(tmp_path, monkeypatch)
+
+    def never(*args, **kwargs):
+        raise AssertionError("the agent must not be trained when model.type is classifier and rl.enabled is false")
+
+    monkeypatch.setattr(rl_agent, "collect_transitions", never)
+    metrics = main.run(cfg)
+    assert metrics["model_type"] == "classifier" and "rl" not in metrics
 
 
 def test_unit_gate_met_saves_and_registers(tmp_path, monkeypatch):
