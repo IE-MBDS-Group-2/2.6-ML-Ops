@@ -1,6 +1,8 @@
 """Tests for scripts/make_sample_prices.py: deterministic synthetic prices for CI and tests."""
 
 import logging
+import runpy
+import sys
 
 import pandas as pd
 import pytest
@@ -75,12 +77,18 @@ def test_integration_output_passes_validate():
     ) is True
 
 
-def test_integration_main_writes_both_files(tmp_path, monkeypatch):
-    """main() writes the raw file and the inference file (inference_days dates) to the configured paths."""
+def _use_config_in(tmp_path, monkeypatch) -> dict:
+    """Load config.yaml, point the two output paths into tmp_path and make config.load_config return that copy."""
     cfg = config.load_config()
     cfg["paths"]["raw_data"] = str(tmp_path / "raw" / "prices.csv")
     cfg["paths"]["inference_data"] = str(tmp_path / "inference" / "prices_latest.csv")
     monkeypatch.setattr(config, "load_config", lambda *args, **kwargs: cfg)
+    return cfg
+
+
+def test_integration_main_writes_both_files(tmp_path, monkeypatch):
+    """main() writes the raw file and the inference file (inference_days dates) to the configured paths."""
+    cfg = _use_config_in(tmp_path, monkeypatch)
 
     sample.main()
 
@@ -90,6 +98,17 @@ def test_integration_main_writes_both_files(tmp_path, monkeypatch):
     assert not raw.empty
     assert latest[date_column].nunique() == cfg["data"]["inference_days"]
     assert set(latest[date_column]) <= set(raw[date_column])
+
+
+def test_integration_running_as_a_script_writes_both_files(tmp_path, monkeypatch):
+    """python -m scripts.make_sample_prices (the CI call) runs main() and writes both files."""
+    _use_config_in(tmp_path, monkeypatch)
+    monkeypatch.delitem(sys.modules, "scripts.make_sample_prices")  # run it fresh, as python -m would
+
+    runpy.run_module("scripts.make_sample_prices", run_name="__main__")
+
+    assert (tmp_path / "raw" / "prices.csv").exists()
+    assert (tmp_path / "inference" / "prices_latest.csv").exists()
 
 
 def test_unit_logs_synthetic_warning(caplog):
