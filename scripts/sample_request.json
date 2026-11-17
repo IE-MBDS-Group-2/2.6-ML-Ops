@@ -1,0 +1,2130 @@
+{
+ "as_of": "2025-12-31",
+ "portfolio_id": "sample",
+ "positions": [
+  {
+   "ticker": "SPY",
+   "market_value": 400000.0
+  },
+  {
+   "ticker": "EFA",
+   "market_value": 200000.0
+  },
+  {
+   "ticker": "IEF",
+   "market_value": 300000.0
+  },
+  {
+   "ticker": "GLD",
+   "market_value": 50000.0
+  },
+  {
+   "ticker": "BIL",
+   "market_value": 50000.0
+  }
+ ],
+ "drawdown": 0.0,
+ "weeks_since_rebalance": 0,
+ "prices": [
+  {
+   "date": "2025-09-25",
+   "ticker": "SPY",
+   "close": 100.3347,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-25",
+   "ticker": "EFA",
+   "close": 98.99,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-25",
+   "ticker": "IEF",
+   "close": 100.7805,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-25",
+   "ticker": "GLD",
+   "close": 100.9706,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-25",
+   "ticker": "BIL",
+   "close": 98.079,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-26",
+   "ticker": "SPY",
+   "close": 99.0583,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-26",
+   "ticker": "EFA",
+   "close": 99.1463,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-26",
+   "ticker": "IEF",
+   "close": 100.492,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-26",
+   "ticker": "GLD",
+   "close": 100.9839,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-26",
+   "ticker": "BIL",
+   "close": 97.2717,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-29",
+   "ticker": "SPY",
+   "close": 99.9591,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-29",
+   "ticker": "EFA",
+   "close": 99.9472,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-29",
+   "ticker": "IEF",
+   "close": 100.5885,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-29",
+   "ticker": "GLD",
+   "close": 102.1525,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-29",
+   "ticker": "BIL",
+   "close": 97.7557,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-30",
+   "ticker": "SPY",
+   "close": 99.1302,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-30",
+   "ticker": "EFA",
+   "close": 100.3457,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-30",
+   "ticker": "IEF",
+   "close": 99.6541,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-30",
+   "ticker": "GLD",
+   "close": 103.0805,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-09-30",
+   "ticker": "BIL",
+   "close": 97.7362,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-01",
+   "ticker": "SPY",
+   "close": 98.9766,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-01",
+   "ticker": "EFA",
+   "close": 99.6925,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-01",
+   "ticker": "IEF",
+   "close": 100.9023,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-01",
+   "ticker": "GLD",
+   "close": 102.9522,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-01",
+   "ticker": "BIL",
+   "close": 97.3469,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-02",
+   "ticker": "SPY",
+   "close": 98.6578,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-02",
+   "ticker": "EFA",
+   "close": 100.2531,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-02",
+   "ticker": "IEF",
+   "close": 101.3014,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-02",
+   "ticker": "GLD",
+   "close": 103.408,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-02",
+   "ticker": "BIL",
+   "close": 97.7955,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-03",
+   "ticker": "SPY",
+   "close": 100.8003,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-03",
+   "ticker": "EFA",
+   "close": 99.8757,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-03",
+   "ticker": "IEF",
+   "close": 100.8128,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-03",
+   "ticker": "GLD",
+   "close": 102.5975,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-03",
+   "ticker": "BIL",
+   "close": 98.4272,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-06",
+   "ticker": "SPY",
+   "close": 101.9686,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-06",
+   "ticker": "EFA",
+   "close": 99.7919,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-06",
+   "ticker": "IEF",
+   "close": 99.9961,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-06",
+   "ticker": "GLD",
+   "close": 101.7824,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-06",
+   "ticker": "BIL",
+   "close": 99.0971,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-07",
+   "ticker": "SPY",
+   "close": 102.757,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-07",
+   "ticker": "EFA",
+   "close": 100.3638,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-07",
+   "ticker": "IEF",
+   "close": 99.3606,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-07",
+   "ticker": "GLD",
+   "close": 102.0492,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-07",
+   "ticker": "BIL",
+   "close": 99.2425,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-08",
+   "ticker": "SPY",
+   "close": 103.0126,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-08",
+   "ticker": "EFA",
+   "close": 101.2686,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-08",
+   "ticker": "IEF",
+   "close": 99.6126,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-08",
+   "ticker": "GLD",
+   "close": 102.7726,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-08",
+   "ticker": "BIL",
+   "close": 99.3393,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-09",
+   "ticker": "SPY",
+   "close": 103.3413,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-09",
+   "ticker": "EFA",
+   "close": 101.9382,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-09",
+   "ticker": "IEF",
+   "close": 98.191,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-09",
+   "ticker": "GLD",
+   "close": 102.4749,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-09",
+   "ticker": "BIL",
+   "close": 98.9018,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-10",
+   "ticker": "SPY",
+   "close": 102.7121,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-10",
+   "ticker": "EFA",
+   "close": 101.6883,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-10",
+   "ticker": "IEF",
+   "close": 99.6883,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-10",
+   "ticker": "GLD",
+   "close": 101.6184,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-10",
+   "ticker": "BIL",
+   "close": 99.8892,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-13",
+   "ticker": "SPY",
+   "close": 101.0144,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-13",
+   "ticker": "EFA",
+   "close": 101.3783,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-13",
+   "ticker": "IEF",
+   "close": 99.8805,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-13",
+   "ticker": "GLD",
+   "close": 102.2446,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-13",
+   "ticker": "BIL",
+   "close": 100.6296,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-14",
+   "ticker": "SPY",
+   "close": 101.8461,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-14",
+   "ticker": "EFA",
+   "close": 101.0552,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-14",
+   "ticker": "IEF",
+   "close": 99.4486,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-14",
+   "ticker": "GLD",
+   "close": 103.1525,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-14",
+   "ticker": "BIL",
+   "close": 100.4672,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-15",
+   "ticker": "SPY",
+   "close": 100.5774,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-15",
+   "ticker": "EFA",
+   "close": 99.9403,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-15",
+   "ticker": "IEF",
+   "close": 98.5641,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-15",
+   "ticker": "GLD",
+   "close": 103.6963,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-15",
+   "ticker": "BIL",
+   "close": 100.6405,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-16",
+   "ticker": "SPY",
+   "close": 101.3021,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-16",
+   "ticker": "EFA",
+   "close": 99.5432,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-16",
+   "ticker": "IEF",
+   "close": 98.7499,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-16",
+   "ticker": "GLD",
+   "close": 104.3761,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-16",
+   "ticker": "BIL",
+   "close": 100.3593,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-17",
+   "ticker": "SPY",
+   "close": 101.7952,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-17",
+   "ticker": "EFA",
+   "close": 98.9142,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-17",
+   "ticker": "IEF",
+   "close": 98.421,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-17",
+   "ticker": "GLD",
+   "close": 104.009,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-17",
+   "ticker": "BIL",
+   "close": 99.1893,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-20",
+   "ticker": "SPY",
+   "close": 102.3214,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-20",
+   "ticker": "EFA",
+   "close": 98.4796,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-20",
+   "ticker": "IEF",
+   "close": 98.4628,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-20",
+   "ticker": "GLD",
+   "close": 104.5402,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-20",
+   "ticker": "BIL",
+   "close": 99.662,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-21",
+   "ticker": "SPY",
+   "close": 103.0329,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-21",
+   "ticker": "EFA",
+   "close": 98.4121,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-21",
+   "ticker": "IEF",
+   "close": 98.0756,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-21",
+   "ticker": "GLD",
+   "close": 104.4882,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-21",
+   "ticker": "BIL",
+   "close": 98.0102,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-22",
+   "ticker": "SPY",
+   "close": 101.5729,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-22",
+   "ticker": "EFA",
+   "close": 97.14,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-22",
+   "ticker": "IEF",
+   "close": 97.127,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-22",
+   "ticker": "GLD",
+   "close": 104.9373,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-22",
+   "ticker": "BIL",
+   "close": 97.1522,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-23",
+   "ticker": "SPY",
+   "close": 101.2192,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-23",
+   "ticker": "EFA",
+   "close": 98.4312,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-23",
+   "ticker": "IEF",
+   "close": 96.8101,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-23",
+   "ticker": "GLD",
+   "close": 105.7427,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-23",
+   "ticker": "BIL",
+   "close": 96.2743,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-24",
+   "ticker": "SPY",
+   "close": 101.0416,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-24",
+   "ticker": "EFA",
+   "close": 97.5256,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-24",
+   "ticker": "IEF",
+   "close": 96.5109,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-24",
+   "ticker": "GLD",
+   "close": 106.663,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-24",
+   "ticker": "BIL",
+   "close": 94.6402,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-27",
+   "ticker": "SPY",
+   "close": 101.5109,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-27",
+   "ticker": "EFA",
+   "close": 97.7867,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-27",
+   "ticker": "IEF",
+   "close": 95.9664,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-27",
+   "ticker": "GLD",
+   "close": 105.1526,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-27",
+   "ticker": "BIL",
+   "close": 94.7369,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-28",
+   "ticker": "SPY",
+   "close": 101.0039,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-28",
+   "ticker": "EFA",
+   "close": 98.0436,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-28",
+   "ticker": "IEF",
+   "close": 96.0162,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-28",
+   "ticker": "GLD",
+   "close": 106.8684,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-28",
+   "ticker": "BIL",
+   "close": 94.5385,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-29",
+   "ticker": "SPY",
+   "close": 100.0004,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-29",
+   "ticker": "EFA",
+   "close": 98.2487,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-29",
+   "ticker": "IEF",
+   "close": 96.2562,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-29",
+   "ticker": "GLD",
+   "close": 108.353,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-29",
+   "ticker": "BIL",
+   "close": 95.3564,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-30",
+   "ticker": "SPY",
+   "close": 100.3873,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-30",
+   "ticker": "EFA",
+   "close": 99.7159,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-30",
+   "ticker": "IEF",
+   "close": 95.1408,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-30",
+   "ticker": "GLD",
+   "close": 107.6924,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-30",
+   "ticker": "BIL",
+   "close": 94.5015,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-31",
+   "ticker": "SPY",
+   "close": 100.0261,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-31",
+   "ticker": "EFA",
+   "close": 98.373,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-31",
+   "ticker": "IEF",
+   "close": 95.7737,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-31",
+   "ticker": "GLD",
+   "close": 107.4854,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-10-31",
+   "ticker": "BIL",
+   "close": 93.1399,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-03",
+   "ticker": "SPY",
+   "close": 99.0402,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-03",
+   "ticker": "EFA",
+   "close": 98.711,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-03",
+   "ticker": "IEF",
+   "close": 96.6051,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-03",
+   "ticker": "GLD",
+   "close": 109.6638,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-03",
+   "ticker": "BIL",
+   "close": 95.8818,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-04",
+   "ticker": "SPY",
+   "close": 99.4804,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-04",
+   "ticker": "EFA",
+   "close": 97.7638,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-04",
+   "ticker": "IEF",
+   "close": 94.5744,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-04",
+   "ticker": "GLD",
+   "close": 109.9903,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-04",
+   "ticker": "BIL",
+   "close": 95.1311,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-05",
+   "ticker": "SPY",
+   "close": 99.097,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-05",
+   "ticker": "EFA",
+   "close": 97.1947,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-05",
+   "ticker": "IEF",
+   "close": 94.4696,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-05",
+   "ticker": "GLD",
+   "close": 111.1957,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-05",
+   "ticker": "BIL",
+   "close": 95.309,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-06",
+   "ticker": "SPY",
+   "close": 98.9695,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-06",
+   "ticker": "EFA",
+   "close": 96.2173,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-06",
+   "ticker": "IEF",
+   "close": 92.9159,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-06",
+   "ticker": "GLD",
+   "close": 110.6884,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-06",
+   "ticker": "BIL",
+   "close": 95.2864,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-07",
+   "ticker": "SPY",
+   "close": 100.7489,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-07",
+   "ticker": "EFA",
+   "close": 96.3715,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-07",
+   "ticker": "IEF",
+   "close": 93.8569,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-07",
+   "ticker": "GLD",
+   "close": 110.1689,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-07",
+   "ticker": "BIL",
+   "close": 94.1859,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-10",
+   "ticker": "SPY",
+   "close": 99.8068,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-10",
+   "ticker": "EFA",
+   "close": 95.7015,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-10",
+   "ticker": "IEF",
+   "close": 95.8828,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-10",
+   "ticker": "GLD",
+   "close": 109.297,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-10",
+   "ticker": "BIL",
+   "close": 95.0038,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-11",
+   "ticker": "SPY",
+   "close": 98.9356,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-11",
+   "ticker": "EFA",
+   "close": 96.6217,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-11",
+   "ticker": "IEF",
+   "close": 96.2807,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-11",
+   "ticker": "GLD",
+   "close": 109.1586,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-11",
+   "ticker": "BIL",
+   "close": 94.9936,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-12",
+   "ticker": "SPY",
+   "close": 98.3174,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-12",
+   "ticker": "EFA",
+   "close": 97.0817,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-12",
+   "ticker": "IEF",
+   "close": 95.8715,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-12",
+   "ticker": "GLD",
+   "close": 107.8535,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-12",
+   "ticker": "BIL",
+   "close": 93.8082,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-13",
+   "ticker": "SPY",
+   "close": 98.5166,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-13",
+   "ticker": "EFA",
+   "close": 98.6438,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-13",
+   "ticker": "IEF",
+   "close": 96.0536,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-13",
+   "ticker": "GLD",
+   "close": 107.7579,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-13",
+   "ticker": "BIL",
+   "close": 94.1044,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-14",
+   "ticker": "SPY",
+   "close": 99.8328,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-14",
+   "ticker": "EFA",
+   "close": 98.8898,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-14",
+   "ticker": "IEF",
+   "close": 95.6877,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-14",
+   "ticker": "GLD",
+   "close": 108.9824,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-14",
+   "ticker": "BIL",
+   "close": 94.5361,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-17",
+   "ticker": "SPY",
+   "close": 101.3959,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-17",
+   "ticker": "EFA",
+   "close": 99.1007,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-17",
+   "ticker": "IEF",
+   "close": 94.5448,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-17",
+   "ticker": "GLD",
+   "close": 107.524,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-17",
+   "ticker": "BIL",
+   "close": 96.1252,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-18",
+   "ticker": "SPY",
+   "close": 103.1741,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-18",
+   "ticker": "EFA",
+   "close": 98.9525,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-18",
+   "ticker": "IEF",
+   "close": 94.2108,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-18",
+   "ticker": "GLD",
+   "close": 109.1277,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-18",
+   "ticker": "BIL",
+   "close": 95.0899,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-19",
+   "ticker": "SPY",
+   "close": 102.2819,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-19",
+   "ticker": "EFA",
+   "close": 99.6188,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-19",
+   "ticker": "IEF",
+   "close": 93.8674,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-19",
+   "ticker": "GLD",
+   "close": 109.1548,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-19",
+   "ticker": "BIL",
+   "close": 94.963,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-20",
+   "ticker": "SPY",
+   "close": 102.6579,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-20",
+   "ticker": "EFA",
+   "close": 101.0508,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-20",
+   "ticker": "IEF",
+   "close": 93.9805,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-20",
+   "ticker": "GLD",
+   "close": 109.8904,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-20",
+   "ticker": "BIL",
+   "close": 93.0446,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-21",
+   "ticker": "SPY",
+   "close": 102.6387,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-21",
+   "ticker": "EFA",
+   "close": 100.229,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-21",
+   "ticker": "IEF",
+   "close": 92.8633,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-21",
+   "ticker": "GLD",
+   "close": 108.9584,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-21",
+   "ticker": "BIL",
+   "close": 92.7616,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-24",
+   "ticker": "SPY",
+   "close": 103.6095,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-24",
+   "ticker": "EFA",
+   "close": 98.9297,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-24",
+   "ticker": "IEF",
+   "close": 92.9196,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-24",
+   "ticker": "GLD",
+   "close": 108.4636,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-24",
+   "ticker": "BIL",
+   "close": 92.4855,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-25",
+   "ticker": "SPY",
+   "close": 104.6796,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-25",
+   "ticker": "EFA",
+   "close": 99.4917,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-25",
+   "ticker": "IEF",
+   "close": 94.1902,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-25",
+   "ticker": "GLD",
+   "close": 108.3285,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-25",
+   "ticker": "BIL",
+   "close": 91.8696,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-26",
+   "ticker": "SPY",
+   "close": 104.4766,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-26",
+   "ticker": "EFA",
+   "close": 99.7628,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-26",
+   "ticker": "IEF",
+   "close": 94.3847,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-26",
+   "ticker": "GLD",
+   "close": 107.1863,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-26",
+   "ticker": "BIL",
+   "close": 91.9803,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-27",
+   "ticker": "SPY",
+   "close": 104.7464,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-27",
+   "ticker": "EFA",
+   "close": 102.3042,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-27",
+   "ticker": "IEF",
+   "close": 96.1845,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-27",
+   "ticker": "GLD",
+   "close": 106.3039,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-27",
+   "ticker": "BIL",
+   "close": 91.7436,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-28",
+   "ticker": "SPY",
+   "close": 103.2449,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-28",
+   "ticker": "EFA",
+   "close": 101.7306,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-28",
+   "ticker": "IEF",
+   "close": 96.5169,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-28",
+   "ticker": "GLD",
+   "close": 107.6177,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-11-28",
+   "ticker": "BIL",
+   "close": 91.1022,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-01",
+   "ticker": "SPY",
+   "close": 102.6005,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-01",
+   "ticker": "EFA",
+   "close": 99.5767,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-01",
+   "ticker": "IEF",
+   "close": 96.3889,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-01",
+   "ticker": "GLD",
+   "close": 106.5066,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-01",
+   "ticker": "BIL",
+   "close": 90.6472,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-02",
+   "ticker": "SPY",
+   "close": 101.7317,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-02",
+   "ticker": "EFA",
+   "close": 99.5127,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-02",
+   "ticker": "IEF",
+   "close": 94.7236,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-02",
+   "ticker": "GLD",
+   "close": 104.9761,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-02",
+   "ticker": "BIL",
+   "close": 92.6045,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-03",
+   "ticker": "SPY",
+   "close": 100.4525,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-03",
+   "ticker": "EFA",
+   "close": 98.4511,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-03",
+   "ticker": "IEF",
+   "close": 96.492,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-03",
+   "ticker": "GLD",
+   "close": 108.0572,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-03",
+   "ticker": "BIL",
+   "close": 91.5474,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-04",
+   "ticker": "SPY",
+   "close": 100.1127,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-04",
+   "ticker": "EFA",
+   "close": 98.8169,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-04",
+   "ticker": "IEF",
+   "close": 98.189,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-04",
+   "ticker": "GLD",
+   "close": 107.0232,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-04",
+   "ticker": "BIL",
+   "close": 91.3503,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-05",
+   "ticker": "SPY",
+   "close": 100.9209,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-05",
+   "ticker": "EFA",
+   "close": 99.2762,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-05",
+   "ticker": "IEF",
+   "close": 97.8491,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-05",
+   "ticker": "GLD",
+   "close": 106.9121,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-05",
+   "ticker": "BIL",
+   "close": 90.1217,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-08",
+   "ticker": "SPY",
+   "close": 100.7108,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-08",
+   "ticker": "EFA",
+   "close": 99.0415,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-08",
+   "ticker": "IEF",
+   "close": 98.1056,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-08",
+   "ticker": "GLD",
+   "close": 106.3505,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-08",
+   "ticker": "BIL",
+   "close": 90.5737,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-09",
+   "ticker": "SPY",
+   "close": 101.761,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-09",
+   "ticker": "EFA",
+   "close": 99.2252,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-09",
+   "ticker": "IEF",
+   "close": 98.4801,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-09",
+   "ticker": "GLD",
+   "close": 106.4389,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-09",
+   "ticker": "BIL",
+   "close": 90.6009,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-10",
+   "ticker": "SPY",
+   "close": 101.0572,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-10",
+   "ticker": "EFA",
+   "close": 99.569,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-10",
+   "ticker": "IEF",
+   "close": 98.4139,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-10",
+   "ticker": "GLD",
+   "close": 108.6988,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-10",
+   "ticker": "BIL",
+   "close": 92.0536,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-11",
+   "ticker": "SPY",
+   "close": 101.4775,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-11",
+   "ticker": "EFA",
+   "close": 98.8391,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-11",
+   "ticker": "IEF",
+   "close": 97.3486,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-11",
+   "ticker": "GLD",
+   "close": 110.0261,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-11",
+   "ticker": "BIL",
+   "close": 92.3231,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-12",
+   "ticker": "SPY",
+   "close": 101.9952,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-12",
+   "ticker": "EFA",
+   "close": 97.1444,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-12",
+   "ticker": "IEF",
+   "close": 98.2807,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-12",
+   "ticker": "GLD",
+   "close": 110.5591,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-12",
+   "ticker": "BIL",
+   "close": 91.3256,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-15",
+   "ticker": "SPY",
+   "close": 101.5448,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-15",
+   "ticker": "EFA",
+   "close": 97.4297,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-15",
+   "ticker": "IEF",
+   "close": 98.3617,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-15",
+   "ticker": "GLD",
+   "close": 110.2693,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-15",
+   "ticker": "BIL",
+   "close": 91.2585,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-16",
+   "ticker": "SPY",
+   "close": 101.3194,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-16",
+   "ticker": "EFA",
+   "close": 97.6076,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-16",
+   "ticker": "IEF",
+   "close": 99.8386,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-16",
+   "ticker": "GLD",
+   "close": 107.4721,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-16",
+   "ticker": "BIL",
+   "close": 91.0697,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-17",
+   "ticker": "SPY",
+   "close": 101.5286,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-17",
+   "ticker": "EFA",
+   "close": 97.9258,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-17",
+   "ticker": "IEF",
+   "close": 99.4973,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-17",
+   "ticker": "GLD",
+   "close": 105.6164,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-17",
+   "ticker": "BIL",
+   "close": 91.3957,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-18",
+   "ticker": "SPY",
+   "close": 103.3129,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-18",
+   "ticker": "EFA",
+   "close": 96.4531,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-18",
+   "ticker": "IEF",
+   "close": 100.3866,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-18",
+   "ticker": "GLD",
+   "close": 105.3011,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-18",
+   "ticker": "BIL",
+   "close": 91.3671,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-19",
+   "ticker": "SPY",
+   "close": 102.2561,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-19",
+   "ticker": "EFA",
+   "close": 96.1595,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-19",
+   "ticker": "IEF",
+   "close": 101.7218,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-19",
+   "ticker": "GLD",
+   "close": 105.9462,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-19",
+   "ticker": "BIL",
+   "close": 92.9773,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-22",
+   "ticker": "SPY",
+   "close": 103.4907,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-22",
+   "ticker": "EFA",
+   "close": 96.6105,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-22",
+   "ticker": "IEF",
+   "close": 103.5263,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-22",
+   "ticker": "GLD",
+   "close": 106.4431,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-22",
+   "ticker": "BIL",
+   "close": 93.775,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-23",
+   "ticker": "SPY",
+   "close": 103.2149,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-23",
+   "ticker": "EFA",
+   "close": 96.7038,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-23",
+   "ticker": "IEF",
+   "close": 102.8353,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-23",
+   "ticker": "GLD",
+   "close": 107.5284,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-23",
+   "ticker": "BIL",
+   "close": 92.6982,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-24",
+   "ticker": "SPY",
+   "close": 104.0533,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-24",
+   "ticker": "EFA",
+   "close": 96.5484,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-24",
+   "ticker": "IEF",
+   "close": 104.0706,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-24",
+   "ticker": "GLD",
+   "close": 108.368,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-24",
+   "ticker": "BIL",
+   "close": 94.4137,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-25",
+   "ticker": "SPY",
+   "close": 104.8449,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-25",
+   "ticker": "EFA",
+   "close": 95.0596,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-25",
+   "ticker": "IEF",
+   "close": 104.0321,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-25",
+   "ticker": "GLD",
+   "close": 107.1305,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-25",
+   "ticker": "BIL",
+   "close": 93.9527,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-26",
+   "ticker": "SPY",
+   "close": 106.4608,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-26",
+   "ticker": "EFA",
+   "close": 95.6942,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-26",
+   "ticker": "IEF",
+   "close": 103.3362,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-26",
+   "ticker": "GLD",
+   "close": 106.0766,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-26",
+   "ticker": "BIL",
+   "close": 94.0117,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-29",
+   "ticker": "SPY",
+   "close": 105.1976,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-29",
+   "ticker": "EFA",
+   "close": 95.0806,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-29",
+   "ticker": "IEF",
+   "close": 103.6897,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-29",
+   "ticker": "GLD",
+   "close": 107.3339,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-29",
+   "ticker": "BIL",
+   "close": 94.6122,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-30",
+   "ticker": "SPY",
+   "close": 102.8188,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-30",
+   "ticker": "EFA",
+   "close": 95.3986,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-30",
+   "ticker": "IEF",
+   "close": 103.7955,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-30",
+   "ticker": "GLD",
+   "close": 107.8104,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-30",
+   "ticker": "BIL",
+   "close": 96.1697,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-31",
+   "ticker": "SPY",
+   "close": 100.7282,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-31",
+   "ticker": "EFA",
+   "close": 94.8633,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-31",
+   "ticker": "IEF",
+   "close": 104.4399,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-31",
+   "ticker": "GLD",
+   "close": 106.1376,
+   "volume": 1000000.0
+  },
+  {
+   "date": "2025-12-31",
+   "ticker": "BIL",
+   "close": 97.618,
+   "volume": 1000000.0
+  }
+ ]
+}
