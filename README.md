@@ -216,7 +216,7 @@ So the Stage 2 classifier is not saved, not registered and not shipped. Until a 
 
 ### What triggers a retrain
 One list, used by the monitoring (section "Monitoring") and by the people who run the service. Retrain, and run the quality gate again, when any of these happens:
-- **Monitoring:** the fallback rate is above 50% for 4 weeks in a row (the model is rarely confident enough to override today's rule), or the live drawdown reduction against today's rule is below 0 over a quarter (the model does worse than the rule it replaces). Both are measured from the predictions the API logs to Weights & Biases.
+- **Monitoring:** the fallback rate is above 50% for 4 weeks in a row (the model is rarely confident enough to override today's rule), measured from the predictions the API logs to Weights & Biases; or the drawdown reduction against today's rule is below 0 over a quarter (the model does worse than the rule it replaces), measured from the realised portfolio values in the monthly review. The API logs no portfolio values, so it cannot measure this one.
 - **Data:** a new price snapshot is adopted (a new checksum), or the weekly data check fails.
 - **Inputs:** the input drift alert fires. Proposed: it has no numeric limit yet (open gap 12 in section 1).
 - **Use:** the monthly review shows the portfolio managers overriding the recommendation much more than they follow it.
