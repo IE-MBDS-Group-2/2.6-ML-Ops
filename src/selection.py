@@ -148,13 +148,12 @@ def walk_forward_scores(table: pd.DataFrame, market_data: tuple, cfg: dict, mode
     return pd.DataFrame(rows)
 
 
-def grid_search(table: pd.DataFrame, market_data: tuple, cfg: dict, run: object = None) -> tuple[dict, pd.DataFrame]:
-    """Rank the configured parameter combinations on the training years.
+def _parameter_grid(cfg: dict) -> dict:
+    """Validate the grid against the estimator before fitting.
 
-    Inputs: Decision table, market data, project configuration and optional W&B run.
-    Outputs: Best full parameter set and one row per attempted combination.
-    Why: Pick the highest median walk-forward score before looking at validation.
-    Raises: ValueError for an empty grid, an unsupported parameter or a nonfinite score.
+    Inputs: Project configuration.
+    Outputs: Nonempty parameter grid in configuration order.
+    Why: Reject unknown search parameters before starting the first trial.
     """
     grid = cfg["selection"]["grid"]
     if not grid or any(not isinstance(values, (tuple, list)) or not values for values in grid.values()):
@@ -163,7 +162,18 @@ def grid_search(table: pd.DataFrame, market_data: tuple, cfg: dict, run: object 
     unknown = set(grid).difference(estimator.get_params()).union({"random_state"}.intersection(grid))
     if unknown:
         raise ValueError(f"Unsupported selection.grid parameter(s): {', '.join(sorted(unknown))}.")
+    return grid
 
+
+def grid_search(table: pd.DataFrame, market_data: tuple, cfg: dict, run: object = None) -> tuple[dict, pd.DataFrame]:
+    """Rank the configured parameter combinations on the training years.
+
+    Inputs: Decision table, market data, project configuration and optional W&B run.
+    Outputs: Best full parameter set and one row per attempted combination.
+    Why: Pick the highest median walk-forward score before looking at validation.
+    Raises: ValueError for an empty grid, an unsupported parameter or a nonfinite score.
+    """
+    grid = _parameter_grid(cfg)
     defaults = cfg["model"]["params"]
     trials = []
     best_params = defaults.copy()
@@ -171,8 +181,8 @@ def grid_search(table: pd.DataFrame, market_data: tuple, cfg: dict, run: object 
     for index, combination in enumerate(product(*grid.values()), 1):
         overrides = dict(zip(grid, combination))
         params = {**defaults, **overrides}
-        scores = walk_forward_scores(table, market_data, cfg, params)["max_drawdown_reduction"]
-        score = float(scores.median(skipna=False))
+        score = float(walk_forward_scores(table, market_data, cfg, params)[
+            "max_drawdown_reduction"].median(skipna=False))
         if not isfinite(score):
             raise ValueError(f"Grid trial {index} produced no finite median walk-forward score.")
         metrics = {"trial": index, "median_max_drawdown_reduction": score}

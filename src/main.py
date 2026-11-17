@@ -33,7 +33,8 @@ from sklearn.pipeline import Pipeline
 
 from src import clean_data, config, evaluate, features, infer, load_data
 from src import logger as log_setup
-from src import portfolio, robustness, rules, tracking, train, utils, validate
+from src import (portfolio, robustness, rules, selection, tracking, train,
+                 utils, validate)
 
 logger = logging.getLogger(__name__)
 
@@ -378,14 +379,15 @@ def _write_recommendations(approved: Pipeline | None, columns: list[str], cfg: d
     utils.save_csv(recommendations.reset_index(), paths["predictions"])
     if cfg["tracking"]["log_predictions_table"]:
         tracking.log_table(tracker, "predictions", recommendations.reset_index())
+    logger.info("Pipeline finished: %d recommendations written to %s", len(recommendations), paths["predictions"])
     return len(recommendations)
 
 
 def _write_robustness(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, path: Path,
-                      tracker: object, test_diagnostics: dict) -> None:
+                      tracker: object, test_diagnostics: dict, versions_tried: int) -> None:
     """Write historical and validation diagnostics and attach the test audit when available.
 
-    Inputs: Fitted model and columns, market frames, configuration, report path, tracker and test diagnostics.
+    Inputs: Fitted model and columns, market frames, config, report path, tracker, audit results and trial count.
     Outputs: Robustness JSON and tracking table.
     Why: Record diagnostics without using them to change the validation gate or release decision.
     """
@@ -405,8 +407,24 @@ def _write_robustness(model: Pipeline, columns: list[str], market_data: tuple, c
         "validation_cost_sensitivity": sensitivity.where(sensitivity.notna(), None).to_dict(orient="records"),
         "test": test_diagnostics,
     }
-    # This pipeline fits one candidate. Grid search will supply its complete trial count when integrated.
-    robustness.report_robustness(results, 1, path, tracker)
+    robustness.report_robustness(results, versions_tried, path, tracker)
+
+
+def _select_model_params(table: pd.DataFrame, market_data: tuple, cfg: dict,
+                         path: Path, tracker: object) -> tuple[dict, int]:
+    """Select parameters using training years when selection is enabled.
+
+    Inputs: Decision table, market frames, configuration, trial CSV path and tracker.
+    Outputs: Configuration for the final fit and the number of distinct candidates evaluated.
+    Why: Keep holdout years out of parameter selection and preserve the original configuration.
+    """
+    if not cfg["selection"]["enabled"]:
+        return cfg, 1
+    cutoff = cfg["split"]["train_end"]
+    training_market = tuple(frame.loc[:cutoff] for frame in market_data)
+    best, trials = selection.grid_search(table.loc[:cutoff], training_market, cfg, tracker)
+    utils.save_csv(trials, path)
+    return {**cfg, "model": {**cfg["model"], "params": best}}, len(trials)
 
 
 def run(cfg: dict, tracker: object = None) -> dict:
@@ -429,7 +447,8 @@ def run(cfg: dict, tracker: object = None) -> dict:
     table = portfolio.build_decision_table(
         *market_data, _target_weights(cfg),
         cfg["portfolio"]["first_decision_date"], cfg["data"]["end"], cfg)
-    # 3. Split by date, fit on the train years, score on validation.
+    # 3. Select and fit on the train years, score on validation.
+    cfg, versions_tried = _select_model_params(table, market_data, cfg, paths["selection"], tracker)
     model, columns, _val_rows, scores = _train_and_score(table, cfg)
     # 4. On validation: the quality gate, the guards and the simple-rule challengers.
     metrics, chosen = _validation_report((model, columns, scores), market_data, cfg, paths, tracker)
@@ -438,12 +457,11 @@ def run(cfg: dict, tracker: object = None) -> dict:
     if metrics["gate"]["met"]:
         metrics["test"], test_diagnostics = _test_audit(model, columns, market_data, cfg, chosen)
         tracking.log_metrics(tracker, _numbers(metrics["test"]), prefix="test/")
-    _write_robustness(model, columns, market_data, cfg, paths["robustness"], tracker, test_diagnostics)
+    _write_robustness(model, columns, market_data, cfg, paths["robustness"], tracker, test_diagnostics, versions_tried)
     approved = _keep_or_drop_model(model, metrics, paths, cfg, tracker)
     utils.save_json(metrics, paths["metrics"])
     # 6. Recommend on the latest inference data: the approved model, or today's rule if there is none.
-    written = _write_recommendations(approved, columns, cfg, paths, tracker)
-    logger.info("Pipeline finished: %d recommendations written to %s", written, paths["predictions"])
+    _write_recommendations(approved, columns, cfg, paths, tracker)
     return metrics
 
 
