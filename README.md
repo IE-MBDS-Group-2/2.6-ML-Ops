@@ -118,6 +118,70 @@ Weekly rebalancing advice for a balanced 5-ETF portfolio (SPY, EFA, IEF, GLD, BI
 
 The Stage 2 quality gate is `max_drawdown_reduction >= 0.20` on validation (2020 to 2021). On the current data the gate is not met (see section 1).
 
+## Model card
+
+### Purpose and users
+At each review (weekly by default) the model recommends one of three actions for the balanced 5-ETF portfolio: leave it (0.0), rebalance halfway back to target (0.5) or rebalance fully (1.0). Portfolio managers decide and approve every trade. The quant analyst runs the weekly batch and watches the model. The Investment Committee approves large changes. These roles are assumptions of the business case.
+
+The model only decides *when and how much* to return to targets that the fund sets. It does not choose the targets or the assets, and it is not tactical allocation. It is not meant for other tickers or portfolios, for use without human approval, or for real money: the client is hypothetical.
+
+### Data
+| Item | Value |
+| --- | --- |
+| Source | Yahoo Finance daily prices (close and volume) for SPY, EFA, IEF, GLD and BIL, through `yfinance`. The yfinance documentation says the Yahoo Finance API is for personal use only, so a real firm would need a licensed source |
+| Snapshot | 4,679 trading days per ticker, 2007-05-30 to 2025-12-31, downloaded on 11 Nov 2026. Shared directly with the team, never committed to Git |
+| Raw file checksum | `data/raw/prices.csv`: SHA-256 `3cce101c20eb1bcd5f453176affaa3c7f4a3f470a89973de47617134d6705526` |
+| Inference file checksum | `data/inference/prices_latest.csv`, the last 300 trading days of the same snapshot (2024-10-21 to 2025-12-31): SHA-256 `b5adf3d40afbf760afcb1527c07821064099a7587573b67a8d5ee3f02515e0f3` |
+| Split | By date. Train 2007-09-07 to 2019-12-31 (includes the 2008 crash), validation 2020 to 2021, test 2022 to 2025 (sealed: read once, at the release decision) |
+| Checks on every run | All five tickers present, the same dates for every ticker, close above 0, no missing values, no daily move above 25%. Any failure stops the run |
+
+A new download gives slightly different prices and so a different checksum. Use the shared file and do not re-run `scripts/fetch_prices.py` unless you mean to make a new snapshot.
+
+### Model and features
+- **Default model** (`model.type: classifier`): a multinomial logistic regression with balanced class weights and a fixed seed (42). It is fast, repeatable and easy to explain to a portfolio manager. Balanced weights stop it defaulting to the most common action.
+- **Challenger** (`model.type: fitted_q`): a reinforcement learning agent (fitted Q iteration, scikit-learn only). It goes through the same gate as the classifier.
+- **Inputs**, all known at the close of the review day: for each ETF the current weight and its drift from target, plus the 4-week and 12-week return and the 20-day volatility; for the portfolio the drop since its last high, the weeks since the last rebalance and the estimated cost of a full rebalance.
+- **What it learns**: the action with the best reward for the coming window. Reward = the window's portfolio return, minus 0.1% of the value traded, minus a penalty for new drops below the previous high.
+- **Fallback**: if the model's probability for its preferred action is below 60%, or an input is missing, today's rule applies instead.
+
+### The gate and the honest result
+A model is only saved, registered and served if `max_drawdown_reduction >= 0.20` on validation (2020 to 2021). That is a worst loss at least 20% smaller than today's rule (quarterly rebalance plus a 5-point drift check).
+
+| | Max drawdown, validation 2020 to 2021 |
+| --- | --- |
+| Today's rule | -18.7% |
+| Stage 2 classifier | -19.6% |
+| `max_drawdown_reduction` | **-0.047, gate NOT met** (needs 0.20 or more) |
+
+So the Stage 2 classifier is not saved, not registered and not shipped. Until a model passes, the live service answers with today's rule and says so in its reply. We report this result as it is and do not tune the model on the validation years until it passes. Stage 3 adds the reinforcement learning agent, simple-rule challengers and benchmark portfolios, and a release decision on 2022 to 2025 that runs once.
+
+### Walk-forward results per year
+| Year | Today's rule max drawdown | Model max drawdown | `max_drawdown_reduction` |
+| --- | --- | --- | --- |
+| PENDING: filled from the release run (W&B), not before | PENDING | PENDING | PENDING |
+
+### Known limits
+- **Little evidence.** Validation contains the COVID crash, one stress episode, and there are only about 950 weekly decisions in total (estimate).
+- **Flat costs.** Trading costs are a flat 0.1% of the value traded. Commission, slippage and market impact are a sensitivity check, not the default.
+- **The half step may never win.** In our data the best action looks to be almost always 0.0 or 1.0 (about 55% and 45%, reported by Miguel). PENDING: not yet reproduced on the train and validation years.
+- **"Confidence" is a probability**, the model's probability for its preferred action. It is not a calibrated confidence.
+- **Narrow scope.** Five ETFs, long only, fixed target weights. Positions in any other ticker are rejected.
+- **Hypothetical client, public prices.** Nothing here has been tested with real money or real client data.
+- **Small trades.** `portfolio.min_trade` is 0.0 today, so every trade is kept and buys and sells net to zero. If it is raised, trades below it are dropped and the remaining buys and sells may no longer net exactly to zero.
+- **Validation is not the release decision.** A model that passes the gate can still fail the guards on 2022 to 2025 (return, cost, tracking error, the best simple rule).
+
+### What triggers a retrain
+Proposed. The drift alert has no numeric limit yet (open gap 12 in section 1), so the monitoring owner must confirm it.
+- A new price snapshot is adopted (a new checksum), or the weekly data check fails.
+- The input drift alert fires.
+- The monthly review shows the portfolio managers overriding the recommendation much more than they follow it.
+- The target weights or the rebalancing method change, because the labels depend on them.
+
+A retrained model must pass the gate again before it takes the `prod` alias. If a new version performs worse, roll back to the previous approved version, or to today's rule when there is none.
+
+### Who owns it
+At the firm: the quant analyst runs and monitors it, portfolio managers decide, IT keeps the infrastructure running. In this project: the module owners in the table at the end of this file. Ricardo Arciniegas owns the data snapshot and Miguel Palanca owns the release.
+
 ## Install
 ```bash
 conda env create -f environment.yml
