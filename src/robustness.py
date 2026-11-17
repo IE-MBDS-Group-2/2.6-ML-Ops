@@ -12,8 +12,6 @@ import pandas as pd
 from src import evaluate, portfolio, rules, tracking, utils
 
 logger = logging.getLogger(__name__)
-BOOTSTRAP_DRAWS = 1999
-BOOTSTRAP_BLOCK_WEEKS = 4
 
 
 def _drawdown(values: pd.Series) -> float:
@@ -22,6 +20,7 @@ def _drawdown(values: pd.Series) -> float:
     Inputs: Daily portfolio value series.
     Outputs: Worst loss as a nonpositive fraction.
     Why: All robustness comparisons measure loss against the running peak.
+    Raises: ValueError if the path has fewer than two values, or any is not finite and positive.
     """
     if len(values) < 2 or not np.isfinite(values).all() or (values <= 0).any():
         raise ValueError("A portfolio path needs at least two finite, positive values.")
@@ -46,6 +45,7 @@ def feasibility_ceiling(market_data: tuple, target: pd.Series, cfg: dict, start:
     Inputs: Market frames, target weights, project configuration and inclusive dates.
     Outputs: Baseline and hindsight drawdowns, reduction, gate target and status.
     Why: Measure the protection achieved by labels that can see the next reward window.
+    Raises: ValueError if a simulated portfolio path is unusable (fewer than two finite, positive values).
     """
     baseline_policy = portfolio.make_current_rule_policy(target, rules.review_dates(market_data[0], start, end), cfg)
     labelled = portfolio.build_decision_table(*market_data, target, start, end, cfg)
@@ -83,6 +83,7 @@ def cost_sensitivity(run_policy: Callable[[dict], pd.DataFrame], cfg: dict) -> p
     Inputs: Runner returning daily agent_value and baseline_value, and full configuration.
     Outputs: A row per cost model with drawdowns and their relative reduction.
     Why: A timing result can depend on the assumptions behind trading costs.
+    Raises: ValueError if the runner returns an unusable portfolio path.
     """
     rows = []
     for model in ("flat", "realistic"):
@@ -95,12 +96,14 @@ def cost_sensitivity(run_policy: Callable[[dict], pd.DataFrame], cfg: dict) -> p
 
 
 def without_largest_episode(daily_agent: pd.DataFrame, daily_baseline: pd.DataFrame, *,
-                            threshold: float = 0.20, comparison: str = ">=") -> dict:
+                            threshold: float, comparison: str) -> dict:
     """Recompute the gate metric without the baseline's largest peak-to-trough episode.
 
-    Inputs: Aligned daily paths with value columns, and the configured gate settings.
+    Inputs: Aligned daily paths with value columns, and the gate settings (quality_gate.threshold and
+        quality_gate.comparison in config.yaml; there are no defaults).
     Outputs: Episode bounds, full and reduced scores, and fragility or inconclusive status.
     Why: Removing the same daily returns from both paths tests dependence on one decline.
+    Raises: ValueError if the two paths do not share one unique, sorted calendar.
     """
     agent, baseline = daily_agent["value"], daily_baseline["value"]
     dates = baseline.index
@@ -135,6 +138,8 @@ def bootstrap_p_value(agent_returns: pd.Series, other_returns: pd.Series, n: int
     Inputs: Aligned weekly returns, number of draws, block length and random seed.
     Outputs: One-sided tail probability under the zero-mean null, using half weight for ties.
     Why: Centered, paired circular blocks preserve shared market weeks and short-range dependence.
+    Raises: ValueError if the two series have different indexes, if the returns are not finite, if n is
+        below 1, or if the block is below 1 or longer than the sample.
     """
     if not agent_returns.index.equals(other_returns.index):
         raise ValueError("Weekly return series must have the same length and index.")
@@ -161,6 +166,7 @@ def holm_adjust(p_values: dict[str, float]) -> dict[str, float]:
     Inputs: Nonempty mapping of comparison names to p-values in [0, 1].
     Outputs: Adjusted probabilities keyed by the original comparison names.
     Why: Account for testing the selected model against multiple challengers.
+    Raises: ValueError if the mapping is empty or any p-value is outside [0, 1].
     """
     if not p_values or any(not 0 <= value <= 1 for value in p_values.values()):
         raise ValueError("Supply at least one p-value; every value must be in [0, 1].")
@@ -179,6 +185,7 @@ def test_period_diagnostics(agent: pd.DataFrame, baseline: pd.DataFrame,
     Inputs: Aligned daily simulator paths, each challenger's values and configuration.
     Outputs: Episode exclusion, raw and adjusted p-values, and bootstrap settings.
     Why: Reuse paths from the release audit without running more candidates on the test years.
+    Raises: ValueError from the episode check or the bootstrap when the paths are not aligned or usable.
     """
     gate = cfg["quality_gate"]
     episode = without_largest_episode(agent, baseline, threshold=gate["threshold"], comparison=gate["comparison"])
@@ -187,14 +194,15 @@ def test_period_diagnostics(agent: pd.DataFrame, baseline: pd.DataFrame,
     if weekly.empty or not challengers:
         return {"largest_episode": episode, "challenger_significance": {"status": "inconclusive"}}
 
-    block = min(BOOTSTRAP_BLOCK_WEEKS, len(weekly))
+    draws = cfg["robustness"]["bootstrap_draws"]
+    block = min(cfg["robustness"]["bootstrap_block_weeks"], len(weekly))
     seed = cfg["model"]["random_state"]
-    comparisons = {name: bootstrap_p_value(weekly["agent_values"], weekly[name], BOOTSTRAP_DRAWS, block, seed)
+    comparisons = {name: bootstrap_p_value(weekly["agent_values"], weekly[name], draws, block, seed)
                    for name in challengers}
     return {
         "largest_episode": episode,
         "challenger_significance": {
-            "status": "measured", "weekly_returns": len(weekly), "draws": BOOTSTRAP_DRAWS,
+            "status": "measured", "weekly_returns": len(weekly), "draws": draws,
             "block_weeks": block, "seed": seed, "p_values": comparisons, "holm_adjusted": holm_adjust(comparisons),
         },
     }
@@ -206,6 +214,7 @@ def report_robustness(results: dict, versions_tried: int, path: Path, run: objec
     Inputs: Named results, total candidate versions evaluated, output path and tracking run.
     Outputs: JSON file and a tracking table with the same results.
     Why: The model card needs both the findings and the number of versions considered.
+    Raises: ValueError if versions_tried is below 1; nothing is written then.
     """
     if versions_tried < 1:
         raise ValueError("The robustness report needs at least one evaluated version.")
