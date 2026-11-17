@@ -157,6 +157,19 @@ flake8 --isolated --max-line-length=120 --extend-ignore=E203 src tests
 ```
 GitHub Actions runs both on every pull request and requires at least 90% coverage. Keep code lines at 100 characters or fewer.
 
+## Run in Docker
+The API runs in one image with the exact package versions from `conda-lock.yml`. Install Docker Desktop first.
+```bash
+docker build -t etf-advisor .
+docker run --rm -p 8000:8000 -e MODEL_SOURCE=local etf-advisor
+```
+Then open `http://localhost:8000/health` (or `/docs`). Stop it with Ctrl+C.
+
+- **Contents:** only `config.yaml`, `conda-lock.yml` and `src/` (`.dockerignore` is an allow-list). `.env`, `data/`, `models/` and `tests/` never enter the image. Pass settings as environment variables (`-e NAME=value`), as Render does.
+- **Platform:** the image is built for `linux/amd64`, the platform the lock file and Render use. On an Apple Silicon Mac Docker emulates it, which is slower but gives the same result.
+- **Size:** about 1.5 GB (the scientific stack, W&B, and the dev tools that share the lock file).
+- **Changing packages:** edit `environment.yml`, then run `conda-lock -f environment.yml -p linux-64` and commit both files.
+
 ## Repo structure
 ```text
 .
