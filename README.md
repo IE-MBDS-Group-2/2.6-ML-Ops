@@ -134,6 +134,25 @@ Added in Stage 3. The business case above is unchanged, as submitted. This part 
 | 12 months of shadow operation | operation at the firm | **Not done.** It needs a year of running alongside the current process, which is outside the course |
 | Optional market-stress input (VIX) | none | **Not built** |
 
+**What became of each open gap** (status on 17 Nov 2026, checked against `dev`). The list above is the submitted text and is not edited.
+
+| Gap | Status |
+| --- | --- |
+| 1. Baseline measures | PENDING: measured by the release run. Today's rule on 2020 to 2021 is already known (max drawdown -18.7%, tracking error 0.0059) |
+| 2. Tracking error | **Closed** (#64), as stated in the gap |
+| 3. Which weights the actions and costs use | Decision timing **closed**: the state uses the pre-trade Friday weights, and the trade happens at the next trading day's close (`docs/MODULE_SPECS.md`, portfolio). The weights behind the cost estimate are not restated there |
+| 4. Starting weights | The simulation starts at target weights on the first decision date (2007-09-07). The start of 2022 and the "every day in one window" test are not checked here |
+| 5. Meanings in `config.yaml` | Mostly **closed**: "±5%" is `drift_band: 0.05` in absolute points, the quarterly date is the first Friday of January, April, July and October, `penalty_lambda` is 1.0, `min_trade` is 0.0. Not restated: daily weights for the persistent rule and simple or compounded reward |
+| 6. "Confidence" | **Open**, stated as a known limit in the model card |
+| 7. Feasibility ceiling | **Open**: the check is in the robustness work (#101, not merged yet) and its result is PENDING |
+| 8. Evidence limits | **Open**, stated as a known limit in the model card |
+| 9. Wide drift band as the cause | **Open**: the band research is not done |
+| 10. Yahoo's terms | **Open**: the snapshot owner is named, who read the terms and when is not |
+| 11. `yfinance` and tickers | Tickers and data **confirmed** on 11 Nov. The notes for the pinned `yfinance` version are not rechecked |
+| 12. Drift alert limit | **Open**: no number yet |
+| 13. Daily or weekly challengers; project name | **Open** |
+| 14. Three actions or two | PENDING: the 55% / 45% split is not yet reproduced on the train and validation years |
+
 ---
 
 # 2.6-ML-Ops
@@ -164,7 +183,7 @@ A new download gives slightly different prices and so a different checksum. Use 
 
 ### Model and features
 - **Default model** (`model.type: classifier`): a multinomial logistic regression with balanced class weights and a fixed seed (42). It is fast, repeatable and easy to explain to a portfolio manager. Balanced weights stop it defaulting to the most common action.
-- **Challenger** (`model.type: fitted_q`): a reinforcement learning agent (fitted Q iteration, scikit-learn only). It goes through the same gate as the classifier.
+- **Challenger** (`model.type: fitted_q`): a reinforcement learning agent (fitted Q iteration, scikit-learn only). It is meant to go through the same gate as the classifier. `rl_agent.py` is on `dev`, but `main.py` runs it only after the hook in #102 is merged; until then `model.type` stays `classifier`.
 - **Inputs**, all known at the close of the review day: for each ETF the current weight and its drift from target, plus the 4-week and 12-week return and the 20-day volatility; for the portfolio the drop since its last high, the weeks since the last rebalance and the estimated cost of a full rebalance.
 - **What it learns**: the action with the best reward for the coming window. Reward = the window's portfolio return, minus 0.1% of the value traded, minus a penalty for new drops below the previous high.
 - **Fallback**: if the model's probability for its preferred action is below 60%, or an input is missing, today's rule applies instead.
@@ -236,7 +255,8 @@ One command runs every step and writes these files. Git ignores them.
 | `data/processed/clean.csv` | cleaned prices |
 | `models/model.joblib` | the fitted model |
 | `reports/predictions.csv` | one recommendation per decision date, with a fallback flag |
-| `reports/metrics.json` | validation scores, model against today's rule, and the gate result |
+| `reports/challengers.csv` | one row per simple rule over the validation years: max drawdown, return, cost, tracking error and guard results |
+| `reports/metrics.json` | validation scores, model against today's rule, the gate result, the guards and the chosen challenger |
 
 The log (`logs/pipeline.log`) says "Quality gate met" or "NOT met". If the data or config is wrong, the run stops with exit code 1 and says what to fix.
 
@@ -259,6 +279,7 @@ Then open `http://127.0.0.1:8000/docs` for the interactive page, where you can t
 | `WANDB_MODE` | `online`, `offline` or `disabled` |
 | `WANDB_API_KEY` | your **own** key, only for `wandb` or `online` (team `ie-mbds-group-2`, ask Miguel for an invite) |
 | `WANDB_ENTITY`, `WANDB_MODEL_ALIAS`, `APP_VERSION` | the W&B team, the model alias (`prod`) and the release name shown by `/health` |
+| `RENDER_GIT_COMMIT` | the deployed commit, shown by `/health` as `commit`. Render sets it; leave it as `local` on your machine |
 
 **No model yet?** No model has passed the gate, so none is saved. The service still starts and answers with today's rule, with `fallback: true` and the reason in plain words.
 
