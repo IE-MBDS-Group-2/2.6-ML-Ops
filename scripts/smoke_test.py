@@ -61,7 +61,12 @@ def call(url: str, timeout: float, body: dict | None = None) -> tuple[int, dict 
 
 
 def same_commit(expected: str, actual: str) -> bool:
-    """True when two commit SHAs name the same commit: one is a prefix of the other, at least 7 characters."""
+    """True when two commit SHAs name the same commit.
+
+    Inputs:  expected, the SHA the deploy shipped (short or full); actual, the SHA /health reports.
+    Outputs: True when one is a prefix of the other and the shorter has at least 7 characters.
+    Why:     the workflow passes the full SHA, a person may type a short one; too short a prefix could match by luck.
+    """
     shorter = min(len(expected), len(actual))
     return shorter >= SHORT_SHA and (actual.startswith(expected) or expected.startswith(actual))
 
@@ -121,7 +126,12 @@ def predict_problem(base_url: str, request_body: dict, timeout: float) -> str:
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
-    """The command-line options."""
+    """The command-line options.
+
+    Inputs:  argv, the arguments (None reads sys.argv).
+    Outputs: url, expect_version, expect_commit, timeout and request.
+    Why:     the deploy workflow and a person at a terminal call the same script with the same options.
+    """
     parser = argparse.ArgumentParser(description="Check that the rebalancing service is up and answering.")
     parser.add_argument("--url", required=True, help="base URL of the service, e.g. http://localhost:8000")
     parser.add_argument("--expect-version", default=None, help="the /health version that must be live")
