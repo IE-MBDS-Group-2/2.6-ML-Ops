@@ -51,8 +51,8 @@ def fit_weights(train_returns: pd.DataFrame, method: str, params: dict) -> pd.Se
     covariance = train_returns.cov().to_numpy()
     mean = train_returns.mean().to_numpy()
     scale = max(float(covariance.diagonal().max()), _NUMERIC_FLOOR)
-    covariance /= scale
-    mean /= np.sqrt(scale) if method == "max_sharpe" else scale
+    covariance = covariance / scale
+    mean = mean / (np.sqrt(scale) if method == "max_sharpe" else scale)
     if method == "risk_parity":
         # The log barrier imposes equal risk budgets. Normalize to a fully invested portfolio.
         stable_covariance = covariance + _NUMERIC_FLOOR * np.eye(size)
