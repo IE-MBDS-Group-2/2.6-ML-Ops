@@ -1,4 +1,21 @@
-"""Fit and simulate traditional long-only portfolio benchmarks."""
+"""
+benchmarks.py  [The traditional portfolios, reported next to the model]
+======================================================================
+Purpose   Fit the classic long-only allocations (minimum variance, maximum Sharpe, mean-variance, risk parity)
+          on the TRAIN years only, and run each one through the same simulator and costs as the model
+Method    scipy SLSQP on scaled moments; risk parity uses a log barrier. Maximum Sharpe is fitted on returns in
+          excess of the cash ticker (benchmarks.cash_ticker), and cash gets a zero weight
+Input     Simulator market frames, the config (benchmarks, split, portfolio, data) and evaluation dates
+Output    One row per method: weights, max drawdown, return, volatility, Sharpe and trading cost; saved to
+          reports/benchmarks.csv, added to metrics.json and logged to W&B. Reported, never gated
+Called by main.py (report_benchmarks) and allocation.py (fit_weights, for calculated target weights)
+
+Why it matters
+- fit_weights is the single place the weights are computed, so a user who picks max_sharpe as the target gets
+  the same portfolio as the max_sharpe row of the report
+
+Tests     tests/test_benchmarks.py
+"""
 
 import logging
 from collections.abc import Callable
@@ -36,18 +53,19 @@ def _objective(method: str, mean: np.ndarray, covariance: np.ndarray, params: di
         return lambda weights: float(weights @ covariance @ weights)
     if method == "max_sharpe":
         return lambda weights: -float(mean @ weights) / np.sqrt(max(weights @ covariance @ weights, _NUMERIC_FLOOR))
-    aversion = float(params["risk_aversion"])
+    setting = params.get("risk_aversion")
+    aversion = float("nan") if setting is None else float(setting)
     if not np.isfinite(aversion) or aversion < 0:
-        raise ValueError("benchmarks.risk_aversion must be finite and nonnegative.")
+        raise ValueError("benchmarks.risk_aversion must be set in config.yaml to a finite, nonnegative number.")
     return lambda weights: float(0.5 * aversion * (weights @ covariance @ weights) - mean @ weights)
 
 
-def fit_weights(train_returns: pd.DataFrame, method: str, params: dict) -> pd.Series:
-    """Fit a long-only allocation using pre-cutoff daily returns.
+def _solve_weights(train_returns: pd.DataFrame, method: str, params: dict) -> pd.Series:
+    """Solve one long-only allocation on the given returns.
 
-    Inputs: Finite training returns in ticker order, benchmark name and method settings.
+    Inputs: Finite training returns in column order, benchmark name and method settings.
     Outputs: Weights in input column order, summing to one.
-    Why: Estimate targets strictly within the training period.
+    Why: One optimizer for every method; fit_weights decides which returns it sees.
     """
     if method not in METHODS:
         raise ValueError(f"Unknown benchmark {method!r}. Choose from {', '.join(METHODS)}.")
@@ -81,17 +99,24 @@ def fit_weights(train_returns: pd.DataFrame, method: str, params: dict) -> pd.Se
     return pd.Series(weights / weights.sum(), index=train_returns.columns, dtype=float)
 
 
-def _benchmark_weights(train_returns: pd.DataFrame, method: str, params: dict) -> pd.Series:
-    """Fit allocations using BIL as cash when it is available for maximum Sharpe.
+def fit_weights(train_returns: pd.DataFrame, method: str, params: dict) -> pd.Series:
+    """Fit a long-only allocation using pre-cutoff daily returns.
 
-    Inputs: Training returns, allocation method and benchmark settings.
-    Outputs: Target weights in the original ticker order.
-    Why: The maximum Sharpe portfolio earns excess returns over cash and only holds risky assets.
+    Inputs: Finite training returns in ticker order, benchmark name and the benchmarks settings. If the
+        settings name a cash_ticker, maximum Sharpe is fitted on the other columns' returns in excess of it.
+    Outputs: Weights in input column order, summing to one; the cash ticker gets 0.0 for maximum Sharpe.
+    Why: The report and the allocation target both call this, so they cannot disagree. Estimates stay within
+        the training period.
+    Raises: ValueError if cash_ticker is not a column, plus the errors of the optimizer.
     """
-    if method != "max_sharpe" or "BIL" not in train_returns.columns:
-        return fit_weights(train_returns, method, params)
-    excess_returns = train_returns.drop(columns="BIL").sub(train_returns["BIL"], axis="index")
-    weights = fit_weights(excess_returns, method, params)
+    cash = params.get("cash_ticker")
+    if method != "max_sharpe" or cash is None:
+        return _solve_weights(train_returns, method, params)
+    if cash not in train_returns.columns:
+        raise ValueError(f"benchmarks.cash_ticker {cash!r} is not one of the return columns "
+                         f"({', '.join(map(str, train_returns.columns))}). Fix config.yaml or set it to null.")
+    excess_returns = train_returns.drop(columns=cash).sub(train_returns[cash], axis="index")
+    weights = _solve_weights(excess_returns, method, params)
     return weights.reindex(train_returns.columns, fill_value=0.0)
 
 
@@ -111,7 +136,7 @@ def run_benchmarks(market_data: tuple, cfg: dict, start: str, end: str) -> pd.Da
     decisions = portfolio.decision_dates(bounded_market[0].index, start, end)
     results = []
     for method in settings["methods"]:
-        target = _benchmark_weights(train_returns, method, settings)
+        target = fit_weights(train_returns, method, settings)
         policy = portfolio.make_current_rule_policy(target, decisions, cfg)
         daily, _ = portfolio.simulate(*bounded_market, target, policy, start, end, cfg)
         results.append({"method": method, "weights": target.to_dict(),

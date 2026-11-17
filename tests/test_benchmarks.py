@@ -74,6 +74,7 @@ def _market_fixture() -> tuple[tuple, dict]:
     cfg["data"]["tickers"] = ["B", "A"]
     cfg["portfolio"]["first_decision_date"] = "2019-01-04"
     cfg["split"]["train_end"] = "2019-12-31"
+    cfg["benchmarks"]["cash_ticker"] = None  # these two tickers are both risky
     days = pd.date_range("2019-01-01", "2020-03-31", freq="B")
     rng = np.random.default_rng(32)
     changes = pd.DataFrame(rng.normal(0.0004, 0.01, (len(days), 2)), index=days, columns=["B", "A"])
@@ -93,19 +94,70 @@ def test_unit_only_train_rows_are_used() -> None:
     assert initial["weights"].tolist() == updated["weights"].tolist()
 
 
-def test_unit_max_sharpe_fits_risky_returns_in_excess_of_bil(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Subtract the daily cash return and return zero target weight for cash."""
+def test_unit_max_sharpe_fits_risky_returns_in_excess_of_the_cash_ticker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The public fit subtracts the cash return, fits the risky assets and gives cash a zero weight."""
     returns = _uncorrelated_returns().rename(columns={"B": "SPY", "A": "GLD"})
     returns["BIL"] = [0.001, 0.002, 0.003, 0.004]
-    fit = Mock(return_value=pd.Series({"SPY": 0.75, "GLD": 0.25}))
-    monkeypatch.setattr(benchmarks, "fit_weights", fit)
+    solve = Mock(return_value=pd.Series({"SPY": 0.75, "GLD": 0.25}))
+    monkeypatch.setattr(benchmarks, "_solve_weights", solve)
 
-    weights = benchmarks._benchmark_weights(returns, "max_sharpe", {})
+    weights = benchmarks.fit_weights(returns, "max_sharpe", {"cash_ticker": "BIL"})
 
-    fitted_returns, method, _ = fit.call_args.args
+    fitted_returns, method, _ = solve.call_args.args
     pd.testing.assert_frame_equal(fitted_returns, returns[["SPY", "GLD"]].sub(returns["BIL"], axis=0))
     assert method == "max_sharpe"
     assert weights.to_dict() == {"SPY": 0.75, "GLD": 0.25, "BIL": 0.0}
+
+
+def _returns_with_cash() -> pd.DataFrame:
+    """Return two risky assets and one calm cash column, in a fixed order."""
+    rng = np.random.default_rng(5)
+    frame = pd.DataFrame(rng.normal(0.001, 0.01, size=(60, 3)), columns=["A", "B", "CASH"])
+    frame["CASH"] = 0.0001 + frame["CASH"] * 0.01
+    return frame
+
+
+def test_unit_max_sharpe_gives_the_cash_ticker_zero_weight() -> None:
+    """The real optimizer keeps all of a max-Sharpe portfolio in the risky assets."""
+    frame = _returns_with_cash()
+    weights = benchmarks.fit_weights(frame, "max_sharpe", {"cash_ticker": "CASH"})
+    assert list(weights.index) == list(frame.columns)
+    assert weights["CASH"] == 0.0
+    assert weights.sum() == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("method", ["min_variance", "mean_variance", "risk_parity"])
+def test_unit_cash_ticker_only_changes_max_sharpe(method: str) -> None:
+    """The other three methods treat the cash ticker as an ordinary asset."""
+    frame = _returns_with_cash()
+    plain = benchmarks.fit_weights(frame, method, {"risk_aversion": 3.0})
+    with_cash = benchmarks.fit_weights(frame, method, {"risk_aversion": 3.0, "cash_ticker": "CASH"})
+    pd.testing.assert_series_equal(plain, with_cash)
+
+
+def test_unit_unknown_cash_ticker_raises() -> None:
+    """Name the config key and the available columns when the cash ticker is not in the returns."""
+    with pytest.raises(ValueError, match=r"benchmarks\.cash_ticker 'BIL'.*B, A"):
+        benchmarks.fit_weights(_uncorrelated_returns(), "max_sharpe", {"cash_ticker": "BIL"})
+
+
+def test_unit_missing_risk_aversion_raises() -> None:
+    """A missing setting is a clear ValueError naming the key, not a bare KeyError."""
+    with pytest.raises(ValueError, match=r"benchmarks\.risk_aversion"):
+        benchmarks.fit_weights(_uncorrelated_returns(), "mean_variance", {})
+
+
+def test_integration_report_and_fit_weights_give_one_max_sharpe_answer() -> None:
+    """The max-Sharpe row in the report equals what allocation gets from fit_weights."""
+    market_data, cfg = _market_fixture()
+    cfg["benchmarks"]["cash_ticker"] = "B"
+    table = benchmarks.run_benchmarks(market_data, cfg, "2020-01-01", "2020-03-31")
+    prices = market_data[0].loc[cfg["portfolio"]["first_decision_date"]:cfg["split"]["train_end"],
+                                cfg["data"]["tickers"]]
+    expected = benchmarks.fit_weights(prices.pct_change(fill_method=None).iloc[1:], "max_sharpe", cfg["benchmarks"])
+    reported = table.set_index("method").loc["max_sharpe", "weights"]
+    assert reported == pytest.approx(expected.to_dict())
+    assert reported["B"] == 0.0
 
 
 def test_integration_run_benchmarks_one_row_per_method() -> None:
