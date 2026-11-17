@@ -1,0 +1,94 @@
+# deploy.yml  [Continuous delivery: a GitHub Release goes live on Render]
+# -------------------------------------------------------------------
+# Purpose   Ship the exact commit of a release to Render, then prove the live service answers
+# Trigger   A GitHub Release is published (normal path), or a manual run (rollback and dry run)
+# Flow      check the ref -> CI again on that commit (ci.yml) -> Render deploy hook for that commit
+#           -> smoke test the live URL until it reports that commit
+# Secrets   RENDER_DEPLOY_HOOK (repository secret): the hook URL holds a key, so it is never printed
+# Variables SERVICE_URL (repository variable): the public address of the Render service
+# Runbook   docs/DEPLOY.md (one-time set-up, release, rollback)
+#
+# Why the commit and not the tag name: Render keeps the old instance serving until the new one is healthy, so
+# the smoke test must know it is talking to the new code. The hook deploys GITHUB_SHA (?ref=), Render reports
+# that same commit in RENDER_GIT_COMMIT, and /health returns it. A rollback deploys an older commit the same way.
+
+name: deploy
+
+on:
+  release:
+    types: [published]
+  # Rollback: Actions -> deploy -> Run workflow -> "Use workflow from" -> Tags -> the release to put back.
+  # Dry run before the first release: the same, from the dev branch (docs/DEPLOY.md).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a second one waits instead of cancelling a deploy halfway.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  check-ref:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only a release tag (or dev, for the dry run) can be deployed
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*|refs/heads/dev) echo "Deploying $GITHUB_REF_NAME at commit $GITHUB_SHA" ;;
+            *) echo "::error::$GITHUB_REF is not a release tag (v...) or dev. Pick a tag under 'Use workflow from'."
+               exit 1 ;;
+          esac
+
+  ci:
+    needs: check-ref
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render deploy hook for this commit
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "::error::Repository secret RENDER_DEPLOY_HOOK is not set (docs/DEPLOY.md, step 3)."
+            exit 1
+          fi
+          # The hook URL already has ?key=...; ref picks the commit. -o /dev/null: nothing from Render is printed.
+          curl --fail --silent --show-error --output /dev/null --request POST \
+            "${RENDER_DEPLOY_HOOK}&ref=${GITHUB_SHA}"
+          echo "Render accepted the deploy of $GITHUB_SHA"
+
+      - name: Smoke test the live service
+        env:
+          SERVICE_URL: ${{ vars.SERVICE_URL }}
+        run: |
+          if [ -z "$SERVICE_URL" ]; then
+            echo "::error::Repository variable SERVICE_URL is not set (docs/DEPLOY.md, step 3)."
+            exit 1
+          fi
+          # Standard library only: no environment needed. The free tier builds slowly, hence 15 minutes.
+          python3 scripts/smoke_test.py --url "$SERVICE_URL" --expect-commit "$GITHUB_SHA" --timeout 900
+
+      - name: Summary
+        if: always()
+        env:
+          SERVICE_URL: ${{ vars.SERVICE_URL }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          {
+            echo "### Deploy $GITHUB_REF_NAME: $OUTCOME"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Commit | \`$GITHUB_SHA\` |"
+            echo "| Service | $SERVICE_URL |"
+            echo "| Health | $SERVICE_URL/health |"
+            echo "| Rollback | docs/DEPLOY.md, Rollback |"
+          } >> "$GITHUB_STEP_SUMMARY"

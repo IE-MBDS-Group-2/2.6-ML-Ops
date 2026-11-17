@@ -153,6 +153,7 @@ benchmarks:                      # DECISION D19: reported, never gated; fitted o
   enabled: true
   methods: ["min_variance", "max_sharpe", "mean_variance", "risk_parity"]
   risk_aversion: 3.0             # ESTIMATE, mean_variance only
+  cash_ticker: "BIL"             # max_sharpe: returns in excess of this ticker, which gets weight 0; null = none
 
 guards:                          # README "Goal and success metrics"; reported, not gated
   max_return_shortfall: 0.0025   # annual net return no more than 0.25 points below the baseline
