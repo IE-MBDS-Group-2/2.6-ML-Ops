@@ -109,6 +109,31 @@ Scales to (ideas, not findings): the firm's conservative and growth model portfo
 13. Challengers check weekly, whereas Indexa monitors daily. The project name is not chosen.
 14. The label is only ever 0.0 (about 55% of decisions) or 1.0 (about 45%), never 0.5, because the reward is nearly linear in the action. Decide whether to keep three actions.
 
+### Stage 3 update
+Added in Stage 3. The business case above is unchanged, as submitted. This part says what the live service changes for the desk, what it costs to run, and what became of each commitment. Results marked PENDING come from the release run and are filled in after it.
+
+**What changes for the desk.** Before, the Friday batch wrote a CSV. Now the portfolio manager sends their positions (ticker and market value), the portfolio's drawdown, the weeks since the last rebalance and recent prices to a web address. They get back the recommendation (0.0, 0.5 or 1.0), a proposed portfolio, a trades list and one plain sentence saying why. They make two choices, in their own words: the **target weights** (their own policy mix, or a calculated one: minimum variance, maximum Sharpe, mean-variance or risk parity) and the **rebalancing method** (smart, where our model decides; calendar; tolerance band; or calendar and band). The review frequency (daily, weekly or monthly) is a setting, weekly by default. The portfolio manager still approves every trade.
+
+**What it changes in the decisions today: nothing.** No model has passed the gate, so the service answers with today's rule (quarterly, plus the 5-point drift check) and says so in its reply. The desk gets the same answer as before, with a ready trades list instead of a CSV.
+
+**Cost of running it.** GitHub Actions on GitHub-hosted runners (the repository is public), a Weights & Biases team account for tracking and the model registry (plan to be confirmed), and the Render free tier for hosting. No paid component is used. The estimate in "Value, cost and risks" (under €50 per month for infrastructure) is unchanged. Measured time per request and compute cost per decision, against the limits above (under 60 s and under €0.01): PENDING.
+
+**What became of each commitment** (status on 17 Nov 2026):
+
+| Commitment in this section | Where it lives | Result |
+| --- | --- | --- |
+| Quality gate, `max_drawdown_reduction >= 0.20` on validation 2020 to 2021 | `evaluate.check_gate`, run by `main.py` | Stage 2 classifier: -0.047 (-19.6% against -18.7%). **Not met.** Nothing is saved or shipped |
+| Reinforcement learning agent through the same gate, median of 5 seeds | `rl_agent.py` | PENDING |
+| Simple-rule challengers: current rule, bands of 2.5 and 1.5 points, persistent drift, asymmetric rule, matched-exposure mix; the best is selected on validation | `rules.py`, reported by `main.py` | PENDING |
+| Traditional benchmarks (mean-variance, maximum Sharpe, minimum variance, risk parity), reported and never gated | `benchmarks.py` | PENDING |
+| Guards: annual net return, annual trading cost, tracking error | `evaluate.guard_report`, reported by `main.py` | The tracking-error limit is 0.012, twice today's rule (0.0059). The model's guard results: PENDING |
+| Release decision on 2022 to 2025, run once | `evaluate.release_decision`, the test audit in `main.py` | Not run for the Stage 2 classifier. It failed the gate, so the test years stayed sealed. PENDING for any model that passes |
+| Robustness checks: Holm correction, cost sensitivity, the largest drawdown episode removed | robustness diagnostics | PENDING |
+| Walk-forward check and a small grid search on the train years, every try logged | walk-forward scoring; `selection` in `config.yaml` (off by default) | PENDING |
+| Drift monitor alert | monitoring of the live service | The alert limit still has no number (open gap 12). PENDING |
+| 12 months of shadow operation | operation at the firm | **Not done.** It needs a year of running alongside the current process, which is outside the course |
+| Optional market-stress input (VIX) | none | **Not built** |
+
 ---
 
 # 2.6-ML-Ops
