@@ -112,7 +112,8 @@ def _persistent_policy(target: pd.Series, close_wide: pd.DataFrame, cfg: dict) -
     Why:     the README's multi-asset, multi-day trigger: ignore a drift that lasts one day only.
              Past weights are rebuilt from the decision day's weights and prices (w_d ~ w_t x P_d / P_t), which
              is exact for weekly reviews: the last trade is at the close of the day after the previous decision,
-             before the window starts.
+             before the window starts. In a holiday week (fewer trading days) the window can reach back before
+             that trade, so its first day uses the rebuilt weights, not the ones held then.
     """
     rule = cfg["challengers"]["persistent_drift"]
     tickers = list(target.index)
