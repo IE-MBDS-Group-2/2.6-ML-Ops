@@ -304,38 +304,65 @@ def _reward(start: dict, action: float, window: pd.DataFrame, target: pd.Series,
     return float(growth.iloc[-1]) - 1.0 - cost - cfg["portfolio"]["reward"]["penalty_lambda"] * deeper
 
 
-def _label(state: dict, blocks: tuple[pd.DataFrame, pd.DataFrame], target: pd.Series, cfg: dict) -> float:
-    """Try every action from one decision's state and return the one with the highest reward.
+def _label(start: dict, window: pd.DataFrame, target: pd.Series, cfg: dict) -> float:
+    """Try every action from one decision's state at the trade and return the one with the highest reward.
 
-    state:  weights, value, peak and adv at the close of decision day t.
-    blocks: daily returns on (t, e], before the trade, and on the reward window (e, next execution day].
+    start:  weights, value, peak, drawdown and adv at the close of the execution day, before the trade.
+    window: daily returns on the reward window (execution day, next execution day].
     Ties go to the smaller action (it trades less).
     """
-    start = _window_start(state, blocks[0])
     best_action, best_reward = np.nan, -np.inf
     for action in sorted(cfg["portfolio"]["actions"]):
-        reward = _reward(start, action, blocks[1], target, cfg)
+        reward = _reward(start, action, window, target, cfg)
         if reward > best_reward + _TIE_TOLERANCE:
             best_action, best_reward = float(action), reward
     return best_action
 
 
-def _labels(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFrame, volume_wide: pd.DataFrame,
-            target: pd.Series, cfg: dict) -> pd.Series:
-    """best_action for every decision with a full reward window; NaN for the rest (the last one)."""
+def _decision_windows(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFrame,
+                      volume_wide: pd.DataFrame, target: pd.Series, cfg: dict):
+    """Walk through the decisions that have a full reward window.
+
+    Inputs:  daily and decisions, the two frames from simulate; close_wide, volume_wide; target; cfg.
+    Outputs: yields (decision date, state at the trade, reward-window returns) for each such decision.
+    Why:     the labels and the rewards an agent learns from are measured on exactly the same windows.
+    """
     returns = close_wide[target.index].pct_change(fill_method=None)
     adv = costs.average_daily_dollar_volume(close_wide[target.index], volume_wide[target.index],
                                             cfg["costs"]["slippage"]["adv_window"])
     peaks = daily["value"].cummax()
     weight_columns = [f"w_{ticker}" for ticker in target.index]
-    labels = pd.Series(np.nan, index=decisions.index, name=_problem_column(cfg, "target_column"))
     for decided, when in execution_schedule(daily.index, decisions.index).dropna().iterrows():
         state = {"weights": decisions.loc[decided, weight_columns].set_axis(target.index).astype(float),
                  "value": daily.at[decided, "value"], "peak": peaks.at[decided], "adv": adv.loc[decided]}
-        blocks = (returns.loc[decided:when["execution_date"]].iloc[1:],
-                  returns.loc[when["reward_start"]:when["reward_end"]])
-        labels.loc[decided] = _label(state, blocks, target, cfg)
+        start = _window_start(state, returns.loc[decided:when["execution_date"]].iloc[1:])
+        yield decided, start, returns.loc[when["reward_start"]:when["reward_end"]]
+
+
+def _labels(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFrame, volume_wide: pd.DataFrame,
+            target: pd.Series, cfg: dict) -> pd.Series:
+    """best_action for every decision with a full reward window; NaN for the rest (the last one)."""
+    labels = pd.Series(np.nan, index=decisions.index, name=_problem_column(cfg, "target_column"))
+    for decided, start, window in _decision_windows(daily, decisions, close_wide, volume_wide, target, cfg):
+        labels.loc[decided] = _label(start, window, target, cfg)
     return labels
+
+
+def realised_rewards(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFrame,
+                     volume_wide: pd.DataFrame, target: pd.Series, cfg: dict) -> pd.Series:
+    """The reward each decision of a simulated run earned for the action it actually took.
+
+    Inputs:  daily and decisions, the two frames from simulate (decisions holds the action taken);
+             close_wide, volume_wide; target weights; cfg, the full config (reads costs and portfolio.reward).
+    Outputs: reward per decision date: window return - trading cost - penalty x increase in drawdown. NaN where
+             the reward window is not complete (the last decisions of the run).
+    Why:     the same reward function and the same windows as the labels, so what the classifier is taught
+             and what the reinforcement learning agent is rewarded for cannot drift apart.
+    """
+    rewards = pd.Series(np.nan, index=decisions.index, name="reward")
+    for decided, start, window in _decision_windows(daily, decisions, close_wide, volume_wide, target, cfg):
+        rewards.loc[decided] = _reward(start, float(decisions.at[decided, "action"]), window, target, cfg)
+    return rewards
 
 
 def build_decision_table(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_features: pd.DataFrame,

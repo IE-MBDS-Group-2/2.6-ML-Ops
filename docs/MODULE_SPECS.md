@@ -528,18 +528,22 @@ class QAgent:            # predict(X) -> action per row; predict_proba(X) -> one
   `gamma` x the best Q in the next state.
 - `collect_transitions`: runs `portfolio.simulate` over the **train years only** with seeded random policies
   (`n_episodes` runs), and records for every decision: state, action, reward, next state, `done`. The reward is
-  the README's: next window's return minus trading cost minus the penalty for new drops below the previous high
-  (the same function the labels use).
+  the README's: next window's return minus trading cost minus the penalty for new drops below the previous high.
+  It comes from `portfolio.realised_rewards`, which shares its windows and its reward function with the labels.
+  `done` is False on every row: the data ends, the portfolio does not.
 - `fit_q_agent`: `n_iterations` rounds; each round fits one regressor on (state, action) against
   `reward + gamma * max over actions of Q(next state)`. Small model (`HistGradientBoostingRegressor`, shallow).
-- `QAgent.predict` picks the action with the highest Q. `predict_proba` is a softmax of the Q values
-  (`rl.temperature`), so `infer.run_inference` and the 60% fallback work unchanged. It is a ranking score, not
-  a calibrated probability (README open gap 6): say so in the model card.
+- `QAgent.predict` picks the action with the highest Q. `predict_proba` is a softmax of the Q values divided by
+  their usual gap on the train states (`typical_gap`, set at fit time) times `rl.temperature`, so
+  `infer.run_inference` and the 60% fallback work unchanged. It is a ranking score, not a calibrated
+  probability (README open gap 6): say so in the model card. `fallback_share(agent, X, min_probability)` says
+  how often serving would use today's rule instead of the agent: log it next to the gate result.
 - README mitigations for little data: train `rl.seeds` (5) agents and report the **median**
   `max_drawdown_reduction`; the registered agent is the median one. Log every seed to W&B.
 - Same gate, same simulator, same costs as the classifier: `model.type` in config is `classifier` or `fitted_q`.
   The better of the two on validation is the candidate; test 2022-25 is opened once, for a model that passed.
-- Config section `rl`: `enabled`, `gamma`, `n_iterations`, `n_episodes`, `seeds`, `temperature`, `estimator`.
+- Config section `rl`: `enabled`, `gamma`, `n_iterations`, `n_episodes`, `seeds`, `temperature`, `estimator`
+  (with `early_stopping` set explicitly).
 - Tests: on a toy problem where one action always pays more, the agent learns it (known value); same seed gives
   the same agent; transitions never reach past the train end; windows join with no gaps or overlaps;
   `predict_proba` rows sum to 1; every raise tested.
