@@ -215,11 +215,12 @@ So the Stage 2 classifier is not saved, not registered and not shipped. Until a 
 - **Validation is not the release decision.** A model that passes the gate can still fail the guards on 2022 to 2025 (return, cost, tracking error, the best simple rule).
 
 ### What triggers a retrain
-Proposed. The drift alert has no numeric limit yet (open gap 12 in section 1), so the monitoring owner must confirm it.
-- A new price snapshot is adopted (a new checksum), or the weekly data check fails.
-- The input drift alert fires.
-- The monthly review shows the portfolio managers overriding the recommendation much more than they follow it.
-- The target weights or the rebalancing method change, because the labels depend on them.
+One list, used by the monitoring (section "Monitoring") and by the people who run the service. Retrain, and run the quality gate again, when any of these happens:
+- **Monitoring:** the fallback rate is above 50% for 4 weeks in a row (the model is rarely confident enough to override today's rule), or the live drawdown reduction against today's rule is below 0 over a quarter (the model does worse than the rule it replaces). Both are measured from the predictions the API logs to Weights & Biases.
+- **Data:** a new price snapshot is adopted (a new checksum), or the weekly data check fails.
+- **Inputs:** the input drift alert fires. Proposed: it has no numeric limit yet (open gap 12 in section 1).
+- **Use:** the monthly review shows the portfolio managers overriding the recommendation much more than they follow it.
+- **Settings:** the target weights or the rebalancing method change, because the labels depend on them.
 
 A retrained model must pass the gate again before it takes the `prod` alias. If a new version performs worse, roll back to the previous approved version, or to today's rule when there is none.
 
