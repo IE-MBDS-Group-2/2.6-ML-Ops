@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+from wandb.errors import AuthenticationError as WandbAuthError
+from wandb.errors import CommError as WandbCommError
 
 from src import tracking
 
@@ -84,9 +86,18 @@ def test_unit_start_run_passes_project_entity_and_config(monkeypatch):
 def test_unit_start_run_logs_in_with_the_key_from_env(monkeypatch):
     fake_wandb = _fake_wandb(monkeypatch)
     placeholder = "not-a-real-value"
-    env = {**_env("offline"), "WANDB_API_KEY": placeholder}
+    env = {**_env("online"), "WANDB_API_KEY": placeholder}
     tracking.start_run(_cfg(), env)
     fake_wandb.login.assert_called_once_with(key=placeholder)
+
+
+def test_unit_offline_run_does_not_log_in(monkeypatch):
+    # An offline run never talks to W&B, so it must not make the network call that logging in is.
+    fake_wandb = _fake_wandb(monkeypatch)
+    env = {**_env("offline"), "WANDB_API_KEY": "not-a-real-value"}
+    tracking.start_run(_cfg(), env)
+    fake_wandb.login.assert_not_called()
+    fake_wandb.init.assert_called_once()
 
 
 def test_unit_log_metrics_adds_the_prefix():
@@ -136,6 +147,22 @@ def test_unit_download_model_raises_on_missing_alias(monkeypatch):
     missing = "Artifact 'test-team/test-project/test-model:prod' not found in response"
     fake_wandb.Api.return_value.artifact.side_effect = ValueError(missing)
     with pytest.raises(FileNotFoundError, match=r"test-team/test-project/test-model.*prod"):
+        tracking.download_model(_env("online"), "test-project", "test-model", "prod")
+
+
+@pytest.mark.parametrize("failure", [WandbCommError("connection refused"), WandbAuthError("invalid API key")])
+def test_unit_download_model_raises_file_not_found_when_wandb_fails(monkeypatch, failure):
+    # W&B down or a wrong key must reach the API as the same FileNotFoundError, so it serves today's rule.
+    fake_wandb = _fake_wandb(monkeypatch)
+    fake_wandb.Api.return_value.artifact.side_effect = failure
+    with pytest.raises(FileNotFoundError, match=r"unreachable or the API key was rejected.*MODEL_SOURCE=local"):
+        tracking.download_model(_env("online"), "test-project", "test-model", "prod")
+
+
+def test_unit_download_model_raises_file_not_found_when_the_api_cannot_start(monkeypatch):
+    fake_wandb = _fake_wandb(monkeypatch)
+    fake_wandb.Api.side_effect = WandbAuthError("invalid API key")
+    with pytest.raises(FileNotFoundError, match="AuthenticationError"):
         tracking.download_model(_env("online"), "test-project", "test-model", "prod")
 
 

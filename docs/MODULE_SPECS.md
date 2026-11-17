@@ -319,8 +319,8 @@ def setup_logging(level: str, log_file: Path | None = None) -> None     # logger
 ### scripts/make_sample_prices.py (Ricardo A., data for CI)
 
 ```python
-def make_sample_prices(tickers: list[str], start: str, end: str, seed: int) -> pd.DataFrame
-def main() -> None     # reads config.yaml; writes paths.raw_data and paths.inference_data
+def make_sample_prices(tickers: list[str], start: str, end: str, seed: int, columns: dict) -> pd.DataFrame
+def main(argv: list[str] | None = None) -> None   # reads config.yaml; writes paths.raw_data and paths.inference_data
 ```
 
 - Business days from `data.start` to `data.end`; one row per (date, ticker); columns from `data.columns`
@@ -332,7 +332,11 @@ def main() -> None     # reads config.yaml; writes paths.raw_data and paths.infe
 - Tests (`tests/test_make_sample_prices.py`): same seed gives identical frames; every ticker has every date;
   the output passes `validate.validate_dataframe` with the config's rules; `main()` writes both files under
   `tmp_path` (patch the config paths).
-- CI calls it before `python -m src.main` (issue "Infra: CI").
+- `columns` is the `data.columns` mapping (column names are never written in the code).
+- Run it as a module from the repo root: `python -m scripts.make_sample_prices` (running the file directly
+  cannot import `src`). It **refuses to overwrite** an existing output file unless `--force` is passed, so a
+  real snapshot is never replaced by accident.
+- CI calls it before `python -m src.main` (issue "Infra: CI"); CI starts from an empty `data/`, so no `--force`.
 
 **Acceptance tests: write these first, then the code until they pass.**
 
@@ -707,6 +711,9 @@ def holm_adjust(p_values: dict[str, float]) -> dict[str, float]
 
 ```python
 def resolve_target(method: str, cfg: dict, train_returns: pd.DataFrame | None) -> pd.Series
+def target_fit(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None) -> dict
+    # {"fallback": bool, "reason": str, "expected_tracking_error": float}; train_returns needed for any
+    # target that is not the policy mix (ex-ante tracking error to the policy weights)
 def resolve_policy(method: str, model: Pipeline | None, target: pd.Series, decisions: pd.DatetimeIndex,
                    close_wide: pd.DataFrame, cfg: dict) -> Callable[[pd.Series], float]
 def explain(state_row: pd.Series, action: float, fallback: bool, cfg: dict) -> str
@@ -758,14 +765,18 @@ def explain(state_row: pd.Series, action: float, fallback: bool, cfg: dict) -> s
 
 ```python
 app = FastAPI(title="ETF rebalancing advisor", version=APP_VERSION)
-@app.get("/health")   -> {"status": "ok", "model_loaded": bool, "model_version": str, "policy": "model" | "rule"}
+@app.get("/health")   -> {"status": "ok", "model_loaded": bool, "model_version": str, "policy": "model" | "rule",
+                          "version": str, "commit": str}
+# version: APP_VERSION (default "dev"); commit: RENDER_GIT_COMMIT, set by Render to the deployed commit
+# (default "local"). model_version is "rule" when no model is loaded, so the deploy checks commit, not it.
 @app.post("/predict") -> PredictResponse
 ```
 
 - Request (decision **D9**): `as_of`, `positions` (list of `{ticker, market_value}`), `drawdown`,
   `weeks_since_rebalance`, `prices` (records with the `data.columns` names, at least `api.min_history_days`
   trading days). Field checks in the pydantic models: only tickers from `config.yaml`, values not negative, total
-  above 0, `drawdown <= 0`.
+  above 0, `drawdown <= 0`. `as_of` can be any trading day: a request on a day that is not a Friday is
+  treated as that week's decision (the state is built at that day's close).
 - Response: `as_of`, `prediction`, `probability`, `recommendation` (0.0, 0.5 or 1.0), `fallback`, `rule_action`,
   `model_version`, `reason` (one plain sentence), `proposed_portfolio` (ticker, weight, value) and `trades`
   (ticker, side, value).
@@ -823,12 +834,12 @@ def log_prediction_batch(run: Run | None, rows: list[dict]) -> None    # trackin
 ### scripts/smoke_test.py and scripts/sample_request.json (Riccardo B.)
 
 ```text
-python scripts/smoke_test.py --url http://localhost:8000 [--expect-version v1.1.0] [--timeout 300]
+python scripts/smoke_test.py --url http://localhost:8000 [--expect-version v1.1.0] [--expect-commit SHA] [--timeout 300]
 ```
 
 - **Standard library only** (`urllib`, `json`, `argparse`, `time`): runs anywhere, no installs.
-- Polls `GET /health` every 10 s until `status == "ok"` (and `model_version` equals `--expect-version` when
-  given) or the timeout ends. Then `POST /predict` with `scripts/sample_request.json` and checks the D9 response
+- Polls `GET /health` every 10 s until `status == "ok"` (and `version` equals `--expect-version`, and
+  `commit` matches `--expect-commit` as a short or full SHA, when given) or the timeout ends. Then `POST /predict` with `scripts/sample_request.json` and checks the D9 response
   fields and that `recommendation` is 0.0, 0.5 or 1.0. Exit 0 if all good, 1 otherwise, with one clear line why.
 - `scripts/make_sample_request.py` builds `sample_request.json` from the synthetic prices (last 70 trading days,
   target weights, drawdown 0, weeks 0), so the sample never contains the real snapshot.
@@ -841,7 +852,8 @@ python scripts/smoke_test.py --url http://localhost:8000 [--expect-version v1.1.
 | --- | --- | --- |
 | `test_unit_healthy_service_exits_0` | a stub server: healthy `/health`, valid `/predict` | exit code 0 |
 | `test_unit_unhealthy_until_timeout_exits_1` | `/health` always 503, timeout 1 s | exit code 1 and one line saying health never became ok |
-| `test_unit_wrong_version_exits_1` | `--expect-version v9.9.9` against version `dev` | exit code 1 naming both versions |
+| `test_unit_wrong_version_exits_1` | `--expect-version v9.9.9` against `/health` `version` `dev` | exit code 1 naming both versions |
+| `test_unit_wrong_commit_exits_1` | `--expect-commit` of another SHA | exit code 1 naming both commits |
 | `test_unit_bad_predict_response_exits_1` | `/predict` without `recommendation`, then with 0.7 | exit code 1 each time, naming the problem |
 | `test_unit_only_standard_library_is_imported` | the script's imports (parse it with `ast`) | every import is in `sys.stdlib_module_names` |
 | `test_unit_sample_request_is_valid` | `scripts/sample_request.json` | it validates against the API's request model and contains no real prices |
@@ -871,8 +883,10 @@ python scripts/smoke_test.py --url http://localhost:8000 [--expect-version v1.1.
 ### ci.yml extended (Miguel)
 
 Steps on every PR into `dev` and `main` (and pushes to them): checkout, flake8, environment from
-`conda-lock.yml`, `python scripts/make_sample_prices.py`, `python -m src.main` with `WANDB_MODE=disabled`,
-`pytest --cov=src --cov-branch --cov-fail-under=90`, `radon cc src -s -n C` must print nothing, `docker build`.
+`conda-lock.yml` (and a check that the lock matches `environment.yml`), `python -m scripts.make_sample_prices`,
+`python -m src.main` with `WANDB_MODE=disabled`, `pytest --cov=src --cov-branch --cov-fail-under=90`,
+`radon cc src scripts -s -n C` must print nothing, `docker build`. Triggers also include `merge_group` (the dev
+merge queue) and `workflow_call` (deploy.yml reruns this CI on the release commit).
 No secrets in CI. The job name stays `lint-and-test` (it is the required check in the rulesets).
 
 **Done checks (run each one and paste the output in the PR):**
@@ -901,16 +915,19 @@ No secrets in CI. The job name stays `lint-and-test` (it is the required check i
 
 ### deploy.yml and Render (Miguel)
 
-- Trigger: GitHub Release **published** (and `workflow_dispatch` with a tag, to roll back).
-- Jobs: rerun the CI job on the released commit, then `curl -fsS -X POST "$RENDER_DEPLOY_HOOK"`, then
-  `python scripts/smoke_test.py --url "$SERVICE_URL" --expect-version "$GITHUB_REF_NAME" --timeout 600`.
+- Trigger: GitHub Release **published** (and `workflow_dispatch` from a tag, to roll back; from `dev` for the dry run).
+- Jobs: rerun the CI job on the released commit (`uses: ./.github/workflows/ci.yml`), then the deploy hook for that
+  exact commit (`$RENDER_DEPLOY_HOOK&ref=$GITHUB_SHA`), then
+  `python3 scripts/smoke_test.py --url "$SERVICE_URL" --expect-commit "$GITHUB_SHA" --timeout 900`.
+  The commit, not the tag: Render keeps the old instance serving until the new one is healthy, and
+  `model_version` is `"rule"` while no model passes the gate.
 - Render: Docker web service from `main`, auto-deploy off (only the hook deploys), env vars from D11.
 - Rollback: re-run the workflow for the previous tag, or move the W&B `prod` alias back and restart.
 
 **Done checks (run each one and paste the output in the PR):**
 
 - A manual run (`workflow_dispatch`) deploys and the smoke-test step passes
-- A deliberately wrong `--expect-version` makes the workflow fail (then put it back)
+- A deliberately wrong `SERVICE_URL` (or `--expect-commit`) makes the workflow fail (then put it back)
 - The workflow log shows no secret value; the hook URL only comes from `secrets.RENDER_DEPLOY_HOOK`
 - Rollback steps in the README were followed once by someone who did not write them
 
