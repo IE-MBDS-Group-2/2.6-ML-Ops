@@ -144,7 +144,12 @@ def _target_weights(cfg: dict) -> pd.Series:
 
 
 def _feature_columns(table: pd.DataFrame, cfg: dict) -> list[str]:
-    """The model inputs: every decision-table column except today's rule and the label."""
+    """The model inputs: every decision-table column except today's rule and the label.
+
+    Inputs:  table, the decision table; cfg, the full config (reads problem.target_column).
+    Outputs: the feature column names, in table order.
+    Why:     the classifier and the RL agent must see exactly the same inputs, so both get them from here.
+    """
     return [name for name in table.columns
             if name not in (portfolio.RULE_ACTION_COLUMN, cfg["problem"]["target_column"])]
 
