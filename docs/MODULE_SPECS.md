@@ -368,7 +368,9 @@ def download_model(env: dict[str, str], project: str, name: str, alias: str) -> 
 - `finish_run(failed=True)`: `run.finish(exit_code=1)`, so a pipeline error marks the run failed.
 - `log_model` only runs after the gate passed (D8). Nobody moves `prod` in code: a person promotes in the W&B UI.
 - `download_model`: `wandb.Api().artifact(f"{entity}/{project}/{name}:{alias}").download()`; returns the
-  `.joblib` path. Raises `FileNotFoundError` with a clear message if the alias does not exist.
+  `.joblib` path. Raises `FileNotFoundError` with a clear message for every way the model cannot be fetched: the
+  alias does not exist, W&B is unreachable or rejects the key (`wandb.errors.Error`), or the download holds no
+  `.joblib`. One error type, so the API catches one thing and serves today's rule.
 - Config section `tracking`: `enabled`, `project`, `name`, `group`, `tags`, `dataset_artifact`, `model_artifact`,
   `log_predictions_table`.
 - Tests (`tests/test_tracking.py`), all offline: with `run=None` every function returns `None` and calls nothing;
@@ -544,8 +546,10 @@ class QAgent:            # predict(X) -> action per row; predict_proba(X) -> one
   how often serving would use today's rule instead of the agent: log it next to the gate result.
 - README mitigations for little data: train `rl.seeds` (5) agents and report the **median**
   `max_drawdown_reduction`; the registered agent is the median one. Log every seed to W&B.
-- Same gate, same simulator, same costs as the classifier: `model.type` in config is `classifier` or `fitted_q`.
-  The better of the two on validation is the candidate; test 2022-25 is opened once, for a model that passed.
+- Same gate, same simulator, same costs as the classifier: `model.type` in config is `classifier` or `fitted_q`,
+  and it decides which one is the candidate for the gate (no automatic pick on validation, which would be one more
+  look at validation). With `rl.enabled: true` and `model.type: classifier` the agent is trained and reported too.
+  Test 2022-25 is opened once, for a model that passed.
 - Config section `rl`: `enabled`, `gamma`, `n_iterations`, `n_episodes`, `seeds`, `temperature`, `estimator`
   (with `early_stopping` set explicitly).
 - Tests: on a toy problem where one action always pays more, the agent learns it (known value); same seed gives
@@ -831,7 +835,7 @@ def log_prediction_batch(run: Run | None, rows: list[dict]) -> None    # trackin
 | `test_unit_tracking_error_never_reaches_the_client` | `log_prediction_batch` raising | the request still returns 200 and the error is logged |
 | `test_unit_tracking_disabled_calls_nothing` | `run=None` | no call and no error |
 
-### scripts/smoke_test.py and scripts/sample_request.json (Riccardo B.)
+### scripts/smoke_test.py and scripts/sample_request.json (Raja)
 
 ```text
 python scripts/smoke_test.py --url http://localhost:8000 [--expect-version v1.1.0] [--expect-commit SHA] [--timeout 300]
