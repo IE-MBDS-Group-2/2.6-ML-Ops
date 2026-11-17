@@ -21,6 +21,7 @@ def make_cfg() -> dict:
                       "current_rule": {"drift_band": 0.05, "quarter_months": [1, 4, 7, 10]}},
         "costs": {"aum": 100_000_000, "model": "flat", "flat": {"rate": 0.001}, "slippage": {"adv_window": 20}},
         "problem": {"target_column": "best_action", "id_column": "decision_date"},
+        "rebalancing": {"review": "weekly"},
     }
 
 

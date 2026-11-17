@@ -93,6 +93,7 @@ def test_unit_walk_forward_scores_one_row_per_window(monkeypatch: pytest.MonkeyP
         "model": {"random_state": 42},
         "selection": {"first_train_end": "2017-12-31", "block": "YE", "gap_days": 5},
         "split": {"train_end": "2019-12-31", "val_end": "2020-12-31"},
+        "rebalancing": {"review": "weekly"},
     }
     model_params = {"C": 1.0}
     fit = Mock(return_value=Mock())

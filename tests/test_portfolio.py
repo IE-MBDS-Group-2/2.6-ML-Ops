@@ -108,8 +108,8 @@ def test_integration_decision_table_builds_for_each_review():
     assert all(not table.empty for table in tables.values())
     assert list(tables["daily"].columns) == list(tables["weekly"].columns) == list(tables["monthly"].columns)
     assert len(tables["daily"]) > len(tables["weekly"]) > len(tables["monthly"])
-    assert list(tables["monthly"].index[:-1]) == list(pd.DatetimeIndex(["2024-01-31", "2024-02-29", "2024-03-29",
-                                                                         "2024-04-30", "2024-05-31"]))
+    month_ends = pd.DatetimeIndex(["2024-01-31", "2024-02-29", "2024-03-29", "2024-04-30", "2024-05-31"])
+    assert list(tables["monthly"].index[:-1]) == list(month_ends)
 
 
 # ---------- apply_action ----------
