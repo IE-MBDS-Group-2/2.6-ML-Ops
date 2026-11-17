@@ -4,7 +4,8 @@ tracking.py  [Experiment tracking with Weights & Biases]
 Purpose   Record each run's settings, data version, metrics and model in W&B, and fetch the promoted model
 Input     The config (tracking section), the values from .env, metrics, tables and file paths
 Output    A W&B run, or None when tracking is off; download_model returns the model file's path
-Used by   main.py (training run) and api.py (download_model, monitoring); main.py never imports wandb itself
+Used by   main.py (training run) and api.py (download_model, the serve run, log_prediction_batch);
+          main.py never imports wandb itself
 
 Why it matters
 - Every training run can be compared and audited afterwards: same settings, same data, same metrics
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 # W&B's own name for "the newest version". "prod" is never set in code: a person promotes a model in the W&B UI.
 LATEST_ALIAS = "latest"
+PREDICTION_TABLE = "serve/predictions"   # the W&B table each batch of live answers is logged to
+# What a W&B call can raise (its own errors, network and file errors, bad values). api.py catches these, so a
+# tracking failure never reaches a client.
+TRACKING_ERRORS = (wandb.Error, OSError, ValueError, RuntimeError)
 
 
 def _login(env: dict[str, str]) -> None:
@@ -93,6 +98,21 @@ def log_table(run: wandb.Run | None, name: str, table: pd.DataFrame) -> None:
         return
     run.log({name: wandb.Table(dataframe=table)})
     logger.info("Logged table %s to W&B: %d rows", name, len(table))
+
+
+def log_prediction_batch(run: wandb.Run | None, rows: list[dict]) -> None:
+    """Log a batch of live answers from the API to the serve run as one W&B table.
+
+    Inputs:  run, the serve run or None; rows, one dictionary per answer (as_of, recommendation, probability,
+             fallback, model_version, latency_ms).
+    Outputs: None. With run=None, or no rows, nothing happens.
+    Why:     monitoring: the fallback rate and the recommendations over time show when a retrain is due; one table
+             per batch keeps the number of W&B calls small.
+    """
+    if run is None or not rows:
+        return
+    run.log({PREDICTION_TABLE: wandb.Table(dataframe=pd.DataFrame(rows))})
+    logger.info("Logged a batch of %d predictions to W&B", len(rows))
 
 
 def finish_run(run: wandb.Run | None, failed: bool = False) -> None:

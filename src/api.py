@@ -14,6 +14,8 @@ Why it matters
 - No new ML logic: every step is a call to the module the training pipeline uses, so a live answer and the
   backtest cannot drift apart
 - No model past the gate (D8, D12): the service still starts and answers with today's rule (fallback true)
+- Monitoring: answers go to W&B in batches (api.monitoring_batch_size) under a serve run; a tracking error is
+  logged, never raised, so monitoring can never break serving
 - Wrong input is the client's to fix: 422 for a field that breaks the request model (with the allowed values),
   400 with the pipeline's own message for data the pipeline cannot use; payloads are never logged
 
@@ -21,6 +23,7 @@ Tests     tests/test_api.py
 """
 
 import logging
+import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -181,11 +184,69 @@ def load_serving_model(cfg: dict, env: dict[str, str]) -> tuple[Pipeline | None,
     return model, version
 
 
+class PredictionMonitor:
+    """Keeps the last answers in memory and sends them to W&B as one table when the batch is full.
+
+    Why: monitoring (README "Monitoring") without one W&B call per request; and it can never break serving,
+    because every tracking error is caught and logged, never raised to the client.
+    """
+
+    def __init__(self, run: tracking.wandb.Run | None, batch_size: int) -> None:
+        """Inputs: run, the W&B serve run or None (tracking off: nothing is kept or sent); batch_size, rows per
+        table (api.monitoring_batch_size)."""
+        self.run = run
+        self.batch_size = batch_size
+        self.rows: list[dict] = []
+        self._lock = threading.Lock()   # requests run in a thread pool
+
+    def record(self, row: dict) -> None:
+        """Add one answer; send and clear the batch once it holds batch_size rows."""
+        if self.run is None:
+            return
+        with self._lock:
+            self.rows.append(row)
+            if len(self.rows) < self.batch_size:
+                return
+            batch, self.rows = self.rows, []
+        self._send(batch)
+
+    def flush(self) -> None:
+        """Send whatever is left (at shutdown), so the last partial batch is not lost."""
+        with self._lock:
+            batch, self.rows = self.rows, []
+        if batch:
+            self._send(batch)
+
+    def _send(self, batch: list[dict]) -> None:
+        """Log one batch to W&B; a tracking error is logged, never raised."""
+        try:
+            tracking.log_prediction_batch(self.run, batch)
+        except tracking.TRACKING_ERRORS as error:
+            logger.error("Monitoring: could not send %d predictions to W&B (%s). Serving continues.",
+                         len(batch), error)
+
+
+def start_monitoring(cfg: dict, env: dict[str, str]) -> PredictionMonitor:
+    """Start the W&B serve run (or none when tracking is off) and the prediction buffer.
+
+    Inputs:  cfg, the full config (tracking, api.monitoring_batch_size); env, from config.load_env.
+    Outputs: the monitor; with tracking off, or when W&B cannot be reached, a monitor that does nothing.
+    Why:     a W&B outage must never stop the service from starting.
+    """
+    try:
+        run = tracking.start_run(cfg, env, job_type="serve")
+    except tracking.TRACKING_ERRORS as error:
+        logger.error("Monitoring off: could not start the W&B serve run (%s). Serving continues.", error)
+        run = None
+    return PredictionMonitor(run, cfg["api"]["monitoring_batch_size"])
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    """Start-up: read .env, set up logging, load the model (or go rule-only).
+    """Start-up: read .env, set up logging, load the model (or go rule-only), start monitoring; shutdown: send
+    the last batch and close the W&B run.
 
-    Inputs:  application, the FastAPI app; its state gets env, model and model_version.
+    Inputs:  application, the FastAPI app; its state gets env, model, model_version and monitor.
     Outputs: yields once the service is ready.
     Why:     the model is loaded once, not per request.
     """
@@ -194,7 +255,13 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.version = env["APP_VERSION"]
     application.state.env = env
     application.state.model, application.state.model_version = load_serving_model(CFG, env)
+    application.state.monitor = start_monitoring(CFG, env)
     yield
+    application.state.monitor.flush()
+    try:
+        tracking.finish_run(application.state.monitor.run)
+    except tracking.TRACKING_ERRORS as error:
+        logger.error("Monitoring: could not close the W&B serve run (%s).", error)
 
 
 app = FastAPI(title="ETF rebalancing advisor", version=config.ENV_DEFAULTS["APP_VERSION"], lifespan=lifespan)
@@ -326,4 +393,7 @@ def predict(body: PredictRequest, http_request: Request) -> PredictResponse:
     latency_ms = (time.perf_counter() - started) * MS_PER_SECOND
     logger.info("Predict as_of %s: recommendation %.1f, fallback %s, latency %.1f ms",
                 answer.as_of, answer.recommendation, answer.fallback, latency_ms)
+    state.monitor.record({"as_of": str(answer.as_of), "recommendation": answer.recommendation,
+                          "probability": answer.probability, "fallback": answer.fallback,
+                          "model_version": answer.model_version, "latency_ms": latency_ms})
     return answer
