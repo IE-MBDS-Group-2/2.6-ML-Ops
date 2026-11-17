@@ -53,6 +53,7 @@ ENV_DEFAULTS = {
     "MODEL_SOURCE": "local",
     "WANDB_MODEL_ALIAS": "prod",
     "APP_VERSION": "dev",
+    "RENDER_GIT_COMMIT": "local",
 }
 ALLOWED_ENV_VALUES = {
     "WANDB_MODE": ("online", "offline", "disabled"),
