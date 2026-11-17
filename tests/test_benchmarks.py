@@ -93,6 +93,21 @@ def test_unit_only_train_rows_are_used() -> None:
     assert initial["weights"].tolist() == updated["weights"].tolist()
 
 
+def test_unit_max_sharpe_fits_risky_returns_in_excess_of_bil(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Subtract the daily cash return and return zero target weight for cash."""
+    returns = _uncorrelated_returns().rename(columns={"B": "SPY", "A": "GLD"})
+    returns["BIL"] = [0.001, 0.002, 0.003, 0.004]
+    fit = Mock(return_value=pd.Series({"SPY": 0.75, "GLD": 0.25}))
+    monkeypatch.setattr(benchmarks, "fit_weights", fit)
+
+    weights = benchmarks._benchmark_weights(returns, "max_sharpe", {})
+
+    fitted_returns, method, _ = fit.call_args.args
+    pd.testing.assert_frame_equal(fitted_returns, returns[["SPY", "GLD"]].sub(returns["BIL"], axis=0))
+    assert method == "max_sharpe"
+    assert weights.to_dict() == {"SPY": 0.75, "GLD": 0.25, "BIL": 0.0}
+
+
 def test_integration_run_benchmarks_one_row_per_method() -> None:
     """Exercise all four allocations through the real, cost-aware trading simulator."""
     market_data, cfg = _market_fixture()
