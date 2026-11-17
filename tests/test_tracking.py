@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+import wandb
 
 from src import tracking
 
@@ -84,9 +85,24 @@ def test_unit_start_run_passes_project_entity_and_config(monkeypatch):
 def test_unit_start_run_logs_in_with_the_key_from_env(monkeypatch):
     fake_wandb = _fake_wandb(monkeypatch)
     placeholder = "not-a-real-value"
-    env = {**_env("offline"), "WANDB_API_KEY": placeholder}
+    env = {**_env("online"), "WANDB_API_KEY": placeholder}
     tracking.start_run(_cfg(), env)
     fake_wandb.login.assert_called_once_with(key=placeholder)
+
+
+def test_unit_start_run_online_without_a_key_leaves_login_to_wandb(monkeypatch):
+    fake_wandb = _fake_wandb(monkeypatch)
+    tracking.start_run(_cfg(), _env("online"))
+    fake_wandb.login.assert_not_called()
+    fake_wandb.init.assert_called_once()
+
+
+def test_unit_start_run_offline_never_logs_in(monkeypatch):
+    fake_wandb = _fake_wandb(monkeypatch)
+    env = {**_env("offline"), "WANDB_API_KEY": "not-a-real-value"}
+    run = tracking.start_run(_cfg(), env)
+    fake_wandb.login.assert_not_called()
+    assert run is fake_wandb.init.return_value
 
 
 def test_unit_log_metrics_adds_the_prefix():
@@ -137,6 +153,21 @@ def test_unit_download_model_raises_on_missing_alias(monkeypatch):
     fake_wandb.Api.return_value.artifact.side_effect = ValueError(missing)
     with pytest.raises(FileNotFoundError, match=r"test-team/test-project/test-model.*prod"):
         tracking.download_model(_env("online"), "test-project", "test-model", "prod")
+
+
+@pytest.mark.parametrize("failing_step", ["api", "download"])
+@pytest.mark.parametrize("wandb_error", [wandb.errors.CommError, wandb.errors.AuthenticationError])
+def test_unit_download_model_turns_wandb_errors_into_file_not_found(monkeypatch, failing_step, wandb_error):
+    fake_wandb = _fake_wandb(monkeypatch)
+    fake_wandb.errors.Error = wandb.errors.Error  # the real class, so the except clause can match it
+    error = wandb_error("W&B could not be reached")
+    if failing_step == "api":
+        fake_wandb.Api.side_effect = error
+    else:
+        fake_wandb.Api.return_value.artifact.return_value.download.side_effect = error
+    with pytest.raises(FileNotFoundError, match=r"test-team/test-project/test-model:prod.*MODEL_SOURCE=local") as info:
+        tracking.download_model(_env("online"), "test-project", "test-model", "prod")
+    assert info.value.__cause__ is error
 
 
 def test_unit_download_model_raises_when_no_joblib_was_downloaded(monkeypatch, tmp_path):
