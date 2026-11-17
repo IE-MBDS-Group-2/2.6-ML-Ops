@@ -53,9 +53,19 @@ def walk_forward_windows(dates: pd.DatetimeIndex, first_train_end: str, last_end
 
 
 def _model_policy(model: Pipeline, columns: list[str]) -> Callable[[pd.Series], float]:
-    """Inputs: Fitted model and feature order. Output: Callback. Why: Score simulated states."""
+    """Wrap a fitted model for the simulator.
+
+    Inputs: Fitted model and feature order.
+    Outputs: Policy that predicts the action for a simulated state.
+    Why: Apply the same feature order used during training.
+    """
     def policy(state: pd.Series) -> float:
-        """Input: Current state. Output: Predicted action. Why: Keep the training feature order."""
+        """Predict the action for one decision.
+
+        Inputs: Current simulated state.
+        Outputs: Predicted rebalancing action.
+        Why: The simulator scores one state at a time.
+        """
         return float(model.predict(state[columns].to_frame().T.astype(float))[0])
 
     return policy
@@ -64,7 +74,12 @@ def _model_policy(model: Pipeline, columns: list[str]) -> Callable[[pd.Series], 
 def _score_window(
     model: Pipeline, columns: list[str], market_data: tuple, score_dates: pd.DatetimeIndex, cfg: dict,
 ) -> dict:
-    """Inputs: Model, market frames, dates and config. Output: Metrics. Why: Use the gate's simulator."""
+    """Compare the model and current rule on a single scoring window.
+
+    Inputs: Fitted model, feature order, market frames, scoring dates and configuration.
+    Outputs: Block dates, both drawdowns and the relative drawdown reduction.
+    Why: Score both policies with the same simulator used for the quality gate.
+    """
     start, end = score_dates[0], score_dates[-1]
     period = start.date().isoformat(), end.date().isoformat()
     target_weights = pd.Series(cfg["target_weights"]["policy"], dtype=float)
@@ -84,7 +99,12 @@ def _score_window(
 
 
 def _fit_candidate(rows: pd.DataFrame, columns: list[str], cfg: dict, model_params: dict) -> Pipeline:
-    """Inputs: Eligible rows, features and settings. Output: Model. Why: Fit only known labels."""
+    """Fit a candidate model using the eligible decisions for a window.
+
+    Inputs: Eligible rows, feature columns, configuration and model parameters.
+    Outputs: Fitted sklearn pipeline.
+    Why: Training only uses decisions whose labels are available before scoring.
+    """
     problem = cfg["problem"]
     target = problem["target_column"]
     labelled = rows.dropna(subset=[target])
@@ -102,6 +122,7 @@ def walk_forward_scores(table: pd.DataFrame, market_data: tuple, cfg: dict, mode
     Inputs: Decision table, simulator market frames, config and candidate model parameters.
     Outputs: One row per block with its dates, drawdown reduction and both drawdowns.
     Why: Use the gate's trading simulation while sealing the validation and test years.
+    Raises: ValueError for invalid date windows or a window with no labelled training rows.
     """
     settings = cfg["selection"]
     last_end = cfg["split"]["train_end"]
