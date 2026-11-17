@@ -147,8 +147,9 @@ def test_unit_grid_picks_the_highest_median(monkeypatch: pytest.MonkeyPatch) -> 
     ])
     monkeypatch.setattr(selection, "walk_forward_scores", scores)
     best, trials = selection.grid_search(pd.DataFrame(), (), _grid_config())
-    assert list(zip(trials["C"], trials["class_weight"])) == [
-        (.1, None), (.1, "balanced"), (1, None), (1, "balanced")]
+    # pandas stores a missing class_weight (None) as NaN in the trial table, so compare it as missing, not as None.
+    class_weights = trials["class_weight"].astype(object).where(trials["class_weight"].notna(), None)
+    assert list(zip(trials["C"], class_weights)) == [(.1, None), (.1, "balanced"), (1, None), (1, "balanced")]
     assert trials["median_max_drawdown_reduction"].tolist() == pytest.approx([0, .1, .2, .3])
     assert best == {"max_iter": 1000, "C": 1, "class_weight": "balanced"}
     assert scores.call_count == 4
