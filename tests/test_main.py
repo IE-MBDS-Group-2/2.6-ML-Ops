@@ -153,7 +153,7 @@ def test_integration_pipeline_writes_every_output(tmp_path, monkeypatch):
     cfg = _pipeline_setup(tmp_path, monkeypatch)
     _force_gate(monkeypatch, True)
     main.main()
-    for name in ("processed_data", "model", "predictions", "metrics", "challengers"):
+    for name in ("processed_data", "model", "predictions", "metrics", "challengers", "robustness"):
         assert (tmp_path / cfg["paths"][name]).exists()
     model = utils.load_model(tmp_path / cfg["paths"]["model"])
     metrics = json.loads((tmp_path / cfg["paths"]["metrics"]).read_text(encoding="utf-8"))
@@ -172,6 +172,11 @@ def test_integration_pipeline_writes_every_output(tmp_path, monkeypatch):
     challengers = pd.read_csv(tmp_path / cfg["paths"]["challengers"])
     assert "current" in set(challengers["rule"])
     assert metrics["challenger"]["name"] in set(challengers["rule"])
+    robustness = json.loads((tmp_path / cfg["paths"]["robustness"]).read_text(encoding="utf-8"))
+    assert robustness["versions_tried"] == 1
+    significance = robustness["test"]["challenger_significance"]
+    assert significance["status"] == "measured"
+    assert set(significance["p_values"]) == set(significance["holm_adjusted"]) == set(challengers["rule"])
 
 
 def test_unit_gate_met_saves_and_registers(tmp_path, monkeypatch):
@@ -183,7 +188,7 @@ def test_unit_gate_met_saves_and_registers(tmp_path, monkeypatch):
     tables = _record(monkeypatch, "log_table")
     cfg["tracking"]["log_predictions_table"] = False
     metrics = main.run(cfg)
-    assert tables == []                                   # the predictions table is only sent when asked for
+    assert [call[0][1] for call in tables] == ["robustness"]
     assert (tmp_path / cfg["paths"]["model"]).exists()
     assert len(registered) == 1
     assert registered[0][0][2] == cfg["tracking"]["model_artifact"]
@@ -205,7 +210,10 @@ def test_unit_gate_not_met_saves_nothing(tmp_path, monkeypatch):
     main.main()                                   # exit code 0: "not met" is a result, not a crash
     assert not stale.exists()
     assert registered == []
-    assert [call[0][1] for call in tables] == ["predictions"]
+    assert [call[0][1] for call in tables] == ["robustness", "predictions"]
+    robustness = json.loads((tmp_path / cfg["paths"]["robustness"]).read_text(encoding="utf-8"))
+    assert robustness["test"] == {"status": "sealed", "reason": "validation_gate_not_met"}
+    assert [row["cost_model"] for row in robustness["validation_cost_sensitivity"]] == ["flat", "realistic"]
     metrics = json.loads((tmp_path / cfg["paths"]["metrics"]).read_text(encoding="utf-8"))
     assert metrics["gate"]["met"] is False
     assert "test" not in metrics                  # the test years stay sealed

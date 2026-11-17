@@ -12,6 +12,8 @@ import pandas as pd
 from src import evaluate, portfolio, rules, tracking, utils
 
 logger = logging.getLogger(__name__)
+BOOTSTRAP_DRAWS = 1999
+BOOTSTRAP_BLOCK_WEEKS = 4
 
 
 def _drawdown(values: pd.Series) -> float:
@@ -168,6 +170,34 @@ def holm_adjust(p_values: dict[str, float]) -> dict[str, float]:
         largest = min(1.0, max(largest, (len(p_values) - rank) * value))
         adjusted[name] = largest
     return {name: adjusted[name] for name in p_values}
+
+
+def test_period_diagnostics(agent: pd.DataFrame, baseline: pd.DataFrame,
+                            challengers: dict[str, pd.Series], cfg: dict) -> dict:
+    """Report fragility and challenger significance during the one-time test audit.
+
+    Inputs: Aligned daily simulator paths, each challenger's values and configuration.
+    Outputs: Episode exclusion, raw and adjusted p-values, and bootstrap settings.
+    Why: Reuse paths from the release audit without running more candidates on the test years.
+    """
+    gate = cfg["quality_gate"]
+    episode = without_largest_episode(agent, baseline, threshold=gate["threshold"], comparison=gate["comparison"])
+    weekly = pd.DataFrame({"agent_values": agent["value"], **challengers}).resample("W-FRI").last()
+    weekly = weekly.pct_change(fill_method=None).dropna()
+    if weekly.empty or not challengers:
+        return {"largest_episode": episode, "challenger_significance": {"status": "inconclusive"}}
+
+    block = min(BOOTSTRAP_BLOCK_WEEKS, len(weekly))
+    seed = cfg["model"]["random_state"]
+    comparisons = {name: bootstrap_p_value(weekly["agent_values"], weekly[name], BOOTSTRAP_DRAWS, block, seed)
+                   for name in challengers}
+    return {
+        "largest_episode": episode,
+        "challenger_significance": {
+            "status": "measured", "weekly_returns": len(weekly), "draws": BOOTSTRAP_DRAWS,
+            "block_weeks": block, "seed": seed, "p_values": comparisons, "holm_adjusted": holm_adjust(comparisons),
+        },
+    }
 
 
 def report_robustness(results: dict, versions_tried: int, path: Path, run: object = None) -> None:
