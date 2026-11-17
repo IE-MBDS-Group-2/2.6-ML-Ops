@@ -105,7 +105,9 @@ def test_unit_walk_forward_scores_one_row_per_window(monkeypatch: pytest.MonkeyP
 
     result = selection.walk_forward_scores(table, (close, volume, pd.DataFrame(index=days)), cfg, model_params)
 
-    assert list(result.columns) == ["block_start", "block_end", "max_drawdown_reduction", "agent_mdd", "baseline_mdd"]
+    assert list(result.columns) == [
+        "block_start", "block_end", "max_drawdown_reduction", "agent_mdd", "baseline_mdd",
+        "agent_return", "baseline_return", "agent_cost", "baseline_cost"]
     assert len(result) == fit.call_count == len(windows)
     assert simulate.call_count == 2 * len(windows)
     assert list(pd.to_datetime(result["block_start"])) == [score[0] for _, score in windows]
@@ -179,3 +181,42 @@ def test_unit_grid_raises_for_bad_parameters(grid: dict, message: str) -> None:
     cfg["selection"]["grid"] = grid
     with pytest.raises(ValueError, match=message):
         selection.grid_search(pd.DataFrame(), (), cfg)
+
+
+def test_unit_frequency_comparison_one_row_per_review_on_train_years(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each review frequency gets its own decision table and walk-forward fit, on the train years only."""
+    days = pd.date_range("2017-01-02", "2020-12-31", freq="B")
+    market = (pd.DataFrame({"ETF": 100.0}, index=days), pd.DataFrame({"ETF": 1000.0}, index=days),
+              pd.DataFrame(index=days))
+    cfg = {"split": {"train_end": "2019-12-31"}, "portfolio": {"first_decision_date": "2017-02-03"},
+           "target_weights": {"policy": {"ETF": 1.0}}, "rebalancing": {"review": "weekly", "method": "smart"}}
+    seen = []
+
+    def build(close, volume, features_frame, target, start, end, settings):
+        seen.append((settings["rebalancing"]["review"], close.index.max(), start, end))
+        return pd.DataFrame({"signal": 0.0}, index=days[:5])
+
+    def scores(table, market_frames, settings, params):
+        factor = {"daily": 1.0, "weekly": 2.0, "monthly": 3.0}[settings["rebalancing"]["review"]]
+        return pd.DataFrame({
+            "max_drawdown_reduction": [0.1 * factor, 0.3 * factor, float("nan")],
+            "agent_mdd": [-0.1, -0.2, -0.3], "baseline_mdd": [-0.2, -0.4, -0.6],
+            "agent_return": [0.05, 0.06, 0.07], "baseline_return": [0.04, 0.05, 0.06],
+            "agent_cost": [0.001, 0.002, 0.003], "baseline_cost": [0.0, 0.0, 0.0]})
+
+    monkeypatch.setattr(portfolio, "build_decision_table", build)
+    monkeypatch.setattr(selection, "walk_forward_scores", scores)
+
+    result = selection.frequency_comparison(market, cfg, {"C": 1.0})
+
+    assert result["review"].tolist() == ["daily", "weekly", "monthly"]
+    assert [item[0] for item in seen] == ["daily", "weekly", "monthly"]
+    assert all(item[1] == pd.Timestamp("2019-12-31") and item[3] == "2019-12-31" for item in seen)
+    assert result["blocks"].tolist() == [3, 3, 3]
+    assert result["blocks_scored"].tolist() == [2, 2, 2]
+    assert result["median_max_drawdown_reduction"].tolist() == pytest.approx([0.2, 0.4, 0.6])
+    assert result["model_median_max_drawdown"].tolist() == pytest.approx([-0.2] * 3)
+    assert result["rule_median_max_drawdown"].tolist() == pytest.approx([-0.4] * 3)
+    assert result["model_median_annual_return"].tolist() == pytest.approx([0.06] * 3)
+    assert result["rule_median_annual_trading_cost"].tolist() == pytest.approx([0.0] * 3)
+    assert cfg["rebalancing"]["review"] == "weekly"          # the caller's config is not changed

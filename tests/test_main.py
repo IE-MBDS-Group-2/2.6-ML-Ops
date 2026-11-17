@@ -300,6 +300,9 @@ def test_integration_grid_search_reports_trials(tmp_path: Path, monkeypatch) -> 
     assert report["versions_tried"] == len(trials)
     assert report["test"]["status"] == "sealed"
     assert cfg["model"]["params"] == config.load_config()["model"]["params"]
+    comparison = pd.read_csv(tmp_path / cfg["paths"]["frequency_comparison"])
+    assert comparison["review"].tolist() == ["daily", "weekly", "monthly"]
+    assert comparison["blocks"].gt(0).all()
 
 
 def test_unit_error_marks_the_run_failed(tmp_path, monkeypatch):
