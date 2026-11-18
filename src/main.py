@@ -493,17 +493,17 @@ def _write_robustness(model: Pipeline, columns: list[str], market_data: tuple, c
 
 
 def _select_model_params(table: pd.DataFrame, market_data: tuple, cfg: dict,
-                         paths: dict, tracker: object) -> tuple[dict, int]:
+                         paths: dict, tracker: object) -> dict:
     """Select parameters using training years when selection is enabled.
 
     Inputs: Decision table, market frames, configuration, the resolved paths (selection and
         frequency_comparison are written) and tracker.
-    Outputs: Configuration for the final fit and the number of distinct candidates evaluated; also writes the
-        trial table and the daily, weekly and monthly comparison.
+    Outputs: Configuration for the final fit; also writes the trial table and the daily, weekly and monthly
+        comparison. The trials are scored on the train years only, so they are not counted as versions tried.
     Why: Keep holdout years out of parameter selection and preserve the original configuration.
     """
     if not cfg["selection"]["enabled"]:
-        return cfg, 1
+        return cfg
     cutoff = cfg["split"]["train_end"]
     training_market = tuple(frame.loc[:cutoff] for frame in market_data)
     best, trials = selection.grid_search(table.loc[:cutoff], training_market, cfg, tracker)
@@ -511,7 +511,7 @@ def _select_model_params(table: pd.DataFrame, market_data: tuple, cfg: dict,
     comparison = selection.frequency_comparison(market_data, cfg, best)
     utils.save_csv(comparison, paths["frequency_comparison"])
     tracking.log_table(tracker, "frequency_comparison", comparison)
-    return {**cfg, "model": {**cfg["model"], "params": best}}, len(trials)
+    return {**cfg, "model": {**cfg["model"], "params": best}}
 
 
 def _first_trading_day(close_wide: pd.DataFrame, start: str) -> str:
@@ -621,7 +621,7 @@ def run(cfg: dict, tracker: object = None) -> dict:
         cfg["portfolio"]["first_decision_date"], cfg["data"]["end"], cfg)
     # 3. Select the settings on the train years (when enabled), fit the candidate (model.type) on them,
     #    and score it on validation.
-    cfg, _grid_trials = _select_model_params(table, market_data, cfg, paths, tracker)   # trials: train years only
+    cfg = _select_model_params(table, market_data, cfg, paths, tracker)
     model, columns, scores = _candidate(table, market_data, cfg)
     # 4. On validation: the quality gate, the guards and the simple-rule challengers.
     metrics, chosen = _validation_report((model, columns, scores), market_data, cfg, paths, tracker)
