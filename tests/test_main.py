@@ -153,7 +153,7 @@ def test_integration_pipeline_writes_every_output(tmp_path, monkeypatch):
     cfg = _pipeline_setup(tmp_path, monkeypatch)
     _force_gate(monkeypatch, True)
     main.main()
-    for name in ("processed_data", "model", "predictions", "metrics", "challengers", "robustness"):
+    for name in ("processed_data", "model", "predictions", "metrics", "challengers", "robustness", "benchmarks"):
         assert (tmp_path / cfg["paths"][name]).exists()
     model = utils.load_model(tmp_path / cfg["paths"]["model"])
     metrics = json.loads((tmp_path / cfg["paths"]["metrics"]).read_text(encoding="utf-8"))
@@ -239,7 +239,7 @@ def test_unit_gate_met_saves_and_registers(tmp_path, monkeypatch):
     tables = _record(monkeypatch, "log_table")
     cfg["tracking"]["log_predictions_table"] = False
     metrics = main.run(cfg)
-    assert [call[0][1] for call in tables] == ["robustness"]
+    assert [call[0][1] for call in tables] == ["robustness", "benchmarks"]
     assert (tmp_path / cfg["paths"]["model"]).exists()
     assert len(registered) == 1
     assert registered[0][0][2] == cfg["tracking"]["model_artifact"]
@@ -261,7 +261,7 @@ def test_unit_gate_not_met_saves_nothing(tmp_path, monkeypatch):
     main.main()                                   # exit code 0: "not met" is a result, not a crash
     assert not stale.exists()
     assert registered == []
-    assert [call[0][1] for call in tables] == ["robustness", "predictions"]
+    assert [call[0][1] for call in tables] == ["robustness", "benchmarks", "predictions"]
     robustness = json.loads((tmp_path / cfg["paths"]["robustness"]).read_text(encoding="utf-8"))
     assert robustness["test"] == {"status": "sealed", "reason": "validation_gate_not_met"}
     assert [row["cost_model"] for row in robustness["validation_cost_sensitivity"]] == ["flat", "realistic"]
@@ -417,3 +417,42 @@ def test_integration_repo_config_has_every_section():
     """The committed config.yaml loads with every required section."""
     cfg = config.load_config(main.CONFIG_PATH)
     assert cfg["quality_gate"]["metric_key"] == "max_drawdown_reduction"
+
+
+# ---------- benchmarks, trades files and versions tried (#71) ----------
+
+def test_unit_benchmarks_are_reported_on_the_validation_years(tmp_path, monkeypatch):
+    cfg = _pipeline_setup(tmp_path, monkeypatch)
+    metrics = main.run(cfg)
+    report = pd.read_csv(tmp_path / cfg["paths"]["benchmarks"])
+    assert set(report["method"]) == set(cfg["benchmarks"]["methods"])
+    assert len(metrics["benchmarks"]) == len(cfg["benchmarks"]["methods"])
+
+
+def test_unit_trades_are_written_only_when_a_positions_file_exists(tmp_path, monkeypatch):
+    cfg = _pipeline_setup(tmp_path, monkeypatch)
+    main.run(cfg)
+    assert not (tmp_path / cfg["paths"]["trades"]).exists()        # no positions file: nothing written
+    # A drifted book: SPY 20 points above its 40% target, far outside today's 5-point band.
+    values = {"SPY": 600.0, "EFA": 100.0, "IEF": 250.0, "GLD": 25.0, "BIL": 25.0}
+    pd.DataFrame({"ticker": list(values), "market_value": list(values.values())}).to_csv(
+        tmp_path / cfg["paths"]["positions"], index=False)
+    main.run(cfg)
+    proposed = pd.read_csv(tmp_path / cfg["paths"]["proposed_portfolio"])
+    orders = pd.read_csv(tmp_path / cfg["paths"]["trades"])
+    assert list(proposed["ticker"]) == cfg["data"]["tickers"]
+    assert proposed["value"].sum() == pytest.approx(sum(values.values()))
+    # No model passed the gate here, so today's rule decides for this book: the drift breach means rebalance
+    # fully, back to the policy weights, and the buys and sells net to zero.
+    assert proposed.set_index("ticker")["weight"].to_dict() == pytest.approx(cfg["target_weights"]["policy"])
+    assert orders.set_index("ticker")["side"].to_dict() == {"SPY": "sell", "EFA": "buy", "IEF": "buy", "GLD": "buy",
+                                                            "BIL": "buy"}
+    signed = orders["value"].where(orders["side"] == "buy", -orders["value"])
+    assert signed.sum() == pytest.approx(0.0, abs=1e-6)
+
+
+def test_unit_versions_tried_counts_grid_trials_and_rl_seeds():
+    cfg = {"model": {"type": "classifier"}, "rl": {"seeds": [0, 1, 2]}}
+    assert main._versions_tried(cfg, 6, {}) == 6
+    assert main._versions_tried(cfg, 6, {"rl": {}}) == 9                  # classifier plus the reported agent
+    assert main._versions_tried({**cfg, "model": {"type": "fitted_q"}}, 6, {"rl": {}}) == 3

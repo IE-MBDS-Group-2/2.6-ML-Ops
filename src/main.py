@@ -32,10 +32,11 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
-from src import clean_data, config, evaluate, features, infer, load_data
+from src import (benchmarks, clean_data, config, evaluate, features, infer,
+                 load_data)
 from src import logger as log_setup
 from src import (portfolio, rl_agent, robustness, rules, selection, tracking,
-                 train, utils, validate)
+                 trades, train, utils, validate)
 
 logger = logging.getLogger(__name__)
 
@@ -451,10 +452,13 @@ def _write_recommendations(approved: Pipeline | None, columns: list[str], cfg: d
     """Recommend on the latest inference data, save the file and send the table to the tracker if asked.
 
     Inputs:  approved, the model that passed the gate or None; its feature columns; cfg; paths; tracker.
-    Outputs: the number of recommendations written.
+    Outputs: the number of recommendations written. Also writes the proposed portfolio and the trades when a
+             positions file exists (_write_trades).
+    Why:     the batch run gives the same three answers as the API: recommendation, proposed portfolio, trades.
     """
     recommendations = _recommendations(approved, columns, cfg)
     utils.save_csv(recommendations.reset_index(), paths["predictions"])
+    _write_trades(approved, columns, cfg, paths)
     if cfg["tracking"]["log_predictions_table"]:
         tracking.log_table(tracker, "predictions", recommendations.reset_index())
     logger.info("Pipeline finished: %d recommendations written to %s", len(recommendations), paths["predictions"])
@@ -510,6 +514,90 @@ def _select_model_params(table: pd.DataFrame, market_data: tuple, cfg: dict,
     return {**cfg, "model": {**cfg["model"], "params": best}}, len(trials)
 
 
+def _first_trading_day(close_wide: pd.DataFrame, start: str) -> str:
+    """The first trading day on or after a date.
+
+    Inputs:  close_wide, prices indexed by trading day; start, YYYY-MM-DD.
+    Outputs: that trading day as YYYY-MM-DD.
+    Why:     a period can start on a weekend or holiday, and the simulator starts on a trading day.
+    """
+    return str(close_wide.index[close_wide.index >= pd.Timestamp(start)][0].date())
+
+
+def _write_benchmarks(market_data: tuple, cfg: dict, paths: dict, metrics: dict, tracker: object) -> None:
+    """Report the four traditional portfolios over the validation years, next to the model and today's rule.
+
+    Inputs:  market_data; cfg (reads benchmarks and split); paths (benchmarks); metrics, which gains a
+             "benchmarks" entry; tracker, the run or None.
+    Outputs: None. Writes paths.benchmarks and logs the table, when benchmarks.enabled is true.
+    Why:     the business case reports these portfolios on the same dates as the gate; they are never gated.
+    """
+    start, end = _period(cfg, "validation")
+    benchmarks.report_benchmarks(market_data, cfg, _first_trading_day(market_data[0], start), end,
+                                 paths["benchmarks"], metrics, tracker)
+
+
+def _positions_action(approved: Pipeline | None, columns: list[str], weights: pd.Series, cfg: dict) -> float:
+    """The recommendation for the positions' own weights on the latest inference day.
+
+    Inputs:  approved, the model that passed the gate or None; columns, its feature columns; weights, the
+             current weights of the positions file; cfg, the full config.
+    Outputs: 0.0, 0.5 or 1.0: the model's action with the 60% fallback to today's rule, or today's rule when no
+             model passed the gate (D8).
+    Why:     the same state the API builds (portfolio.live_state), so the batch answer for a book and the live
+             answer for the same book agree. The positions file has no drawdown or weeks since the last
+             rebalance, so both start at 0.
+    """
+    close_wide, volume_wide, market = _market_inputs(
+        _load_prices(PROJECT_ROOT / cfg["paths"]["inference_data"], cfg), cfg)
+    state = portfolio.live_state(close_wide, volume_wide, market, weights, 0.0, 0,
+                                 _target_weights(cfg).reindex(weights.index), cfg)
+    rule = state[portfolio.RULE_ACTION_COLUMN]
+    if approved is None:
+        return float(rule.iloc[0])
+    inputs = state[columns]
+    answer = infer.apply_fallback(infer.run_inference(approved, inputs, include_proba=True), rule,
+                                  inputs.isna().any(axis=1), cfg["fallback"]["min_probability"])
+    return float(answer["recommendation"].iloc[0])
+
+
+def _write_trades(approved: Pipeline | None, columns: list[str], cfg: dict, paths: dict) -> bool:
+    """Recommend for the book in the positions file and write its proposed portfolio and trade list.
+
+    Inputs:  approved, the model that passed the gate or None; columns, its feature columns; cfg (reads
+             data.tickers, positions, target_weights and portfolio.min_trade); paths (positions,
+             proposed_portfolio, trades).
+    Outputs: True when the positions file exists and both reports were written, False when there is no file.
+    Why:     the desk acts on orders, not on a 0 / 0.5 / 1.0 code; the batch run gives what the API gives.
+    Raises:  ValueError from trades.positions_to_weights (unknown ticker, negative or missing value, total 0)
+             and from portfolio.live_state.
+    """
+    if not paths["positions"].exists():
+        logger.info("No positions file at %s: no proposed portfolio or trades written", paths["positions"])
+        return False
+    names = cfg["positions"]
+    weights, total = trades.positions_to_weights(utils.load_csv(paths["positions"]), cfg["data"]["tickers"],
+                                                 names["ticker_column"], names["value_column"])
+    action = _positions_action(approved, columns, weights, cfg)
+    proposed = trades.proposed_portfolio(weights, _target_weights(cfg).reindex(weights.index), action, total)
+    utils.save_csv(proposed, paths["proposed_portfolio"])
+    utils.save_csv(trades.trade_list(weights, proposed, total, cfg["portfolio"]["min_trade"]), paths["trades"])
+    logger.info("Positions in %s: action %.1f, proposed portfolio and trades written", paths["positions"], action)
+    return True
+
+
+def _versions_tried(cfg: dict, grid_trials: int, scores: dict) -> int:
+    """How many model versions were looked at on validation, for the multiple-testing correction.
+
+    Inputs:  cfg (reads model.type and rl.seeds); grid_trials, from _select_model_params (1 when off);
+             scores, from _candidate ("rl" is there when the agent was trained).
+    Outputs: grid trials for the classifier when it ran, plus one per RL seed when the agent ran.
+    Why:     every version scored on validation counts, or the robustness report overstates the evidence.
+    """
+    tried = grid_trials if cfg["model"]["type"] == "classifier" else 0
+    return tried + (len(cfg["rl"]["seeds"]) if "rl" in scores else 0)
+
+
 def run(cfg: dict, tracker: object = None) -> dict:
     """The pipeline: data -> decision table -> model -> gate, guards and challengers -> recommendations.
 
@@ -541,8 +629,11 @@ def run(cfg: dict, tracker: object = None) -> dict:
     if metrics["gate"]["met"]:
         metrics["test"], test_diagnostics = _test_audit(model, columns, market_data, cfg, chosen)
         tracking.log_metrics(tracker, _numbers(metrics["test"]), prefix="test/")
-    _write_robustness(model, columns, market_data, cfg, paths["robustness"], tracker, test_diagnostics, versions_tried)
+    _write_robustness(model, columns, market_data, cfg, paths["robustness"], tracker, test_diagnostics,
+                      _versions_tried(cfg, versions_tried, scores))
     approved = _keep_or_drop_model(model, metrics, paths, cfg, tracker)
+    # Reported, never gated: the traditional portfolios on the validation years.
+    _write_benchmarks(market_data, cfg, paths, metrics, tracker)
     utils.save_json(metrics, paths["metrics"])
     # 6. Recommend on the latest inference data: the approved model, or today's rule if there is none.
     _write_recommendations(approved, columns, cfg, paths, tracker)
