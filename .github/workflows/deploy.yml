@@ -1,24 +1,23 @@
-# deploy.yml  [Continuous delivery: a GitHub Release goes live on Render]
+# deploy.yml  [Continuous delivery: a GitHub Release goes live on the self-hosted service]
 # -------------------------------------------------------------------
-# Purpose   Ship the exact commit of a release to Render, then prove the live service answers
-# Trigger   A GitHub Release is published (normal path), or a manual run (rollback and dry run)
-# Flow      check the ref -> CI again on that commit (ci.yml) -> Render deploy hook for that commit
-#           -> smoke test the live URL until it reports that commit
-# Secrets   RENDER_DEPLOY_HOOK (repository secret): the hook URL holds a key, so it is never printed
-# Variables SERVICE_URL (repository variable): the public address of the Render service
-# Runbook   docs/DEPLOY.md (one-time set-up, release, rollback)
+# Purpose   Build the release image once, publish it to GHCR, and prove the live service runs it
+# Trigger   A GitHub Release (or pre-release) is published: CI, build, push, smoke test
+#           A manual run from a release tag: rollback, re-points :release to that tag's existing image (no rebuild)
+# Flow      check the ref -> CI on that commit (ci.yml) -> build with the commit and version baked in
+#           -> push ghcr.io/<org>/<repo>:<sha>, :<tag> and :release -> the host (pull model) picks up :release
+#           -> smoke test the live URL until /health reports that commit
+# Variables SERVICE_URL (repository variable): the public address of the service. No secrets: GITHUB_TOKEN pushes
+# Runbook   docs/DEPLOY.md (set-up, dry run, release, rollback)
 #
-# Why the commit and not the tag name: Render keeps the old instance serving until the new one is healthy, so
-# the smoke test must know it is talking to the new code. The hook deploys GITHUB_SHA (?ref=), Render reports
-# that same commit in RENDER_GIT_COMMIT, and /health returns it. A rollback deploys an older commit the same way.
+# Why the commit: the host keeps the old container serving until the new one is healthy (canary on a side port),
+# so the smoke test must know it is talking to the new image. The image carries its commit (RENDER_GIT_COMMIT,
+# the name the API already reads) and its version (APP_VERSION), and /health returns both.
 
 name: deploy
 
 on:
   release:
     types: [published]
-  # Rollback: Actions -> deploy -> Run workflow -> "Use workflow from" -> Tags -> the release to put back.
-  # Dry run before the first release: the same, from the dev branch (docs/DEPLOY.md).
   workflow_dispatch:
 
 permissions:
@@ -29,66 +28,128 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
   check-ref:
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+      mode: ${{ steps.name.outputs.mode }}
     steps:
-      - name: Only a release tag (or dev, for the dry run) can be deployed
+      - name: Only a release tag can be deployed; a manual run is a rollback
+        id: name
         run: |
           case "$GITHUB_REF" in
-            refs/tags/v*|refs/heads/dev) echo "Deploying $GITHUB_REF_NAME at commit $GITHUB_SHA" ;;
-            *) echo "::error::$GITHUB_REF is not a release tag (v...) or dev. Pick a tag under 'Use workflow from'."
+            refs/tags/v*) ;;
+            *) echo "::error::$GITHUB_REF is not a release tag (v...). Publish a release, or for a rollback pick a tag under 'Use workflow from'."
                exit 1 ;;
           esac
+          mode=release
+          [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && mode=rollback
+          image="$REGISTRY/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "$mode of $GITHUB_REF_NAME (commit $GITHUB_SHA) to $image"
 
   ci:
     needs: check-ref
+    if: needs.check-ref.outputs.mode == 'release'
     uses: ./.github/workflows/ci.yml
 
-  deploy:
-    needs: ci
+  publish:
+    needs: [check-ref, ci]
+    if: needs.check-ref.outputs.mode == 'release'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ${{ needs.check-ref.outputs.image }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Render deploy hook for this commit
+      - name: Log in to GHCR with the workflow's own token
         env:
-          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login "$REGISTRY" -u "$ACTOR" --password-stdin
+
+      - name: Build once, with the commit and version baked in
         run: |
-          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
-            echo "::error::Repository secret RENDER_DEPLOY_HOOK is not set (docs/DEPLOY.md, step 3)."
+          docker build --build-arg GIT_COMMIT="$GITHUB_SHA" --build-arg APP_VERSION="$GITHUB_REF_NAME" \
+            -t "$IMAGE:$GITHUB_SHA" .
+
+      - name: Push the commit tag and the release tag, then move :release (the host follows it)
+        run: |
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:$GITHUB_REF_NAME"
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:release"
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:$GITHUB_REF_NAME"
+          docker push "$IMAGE:release"
+
+  rollback:
+    needs: check-ref
+    if: needs.check-ref.outputs.mode == 'rollback'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ${{ needs.check-ref.outputs.image }}
+    steps:
+      - name: Log in to GHCR with the workflow's own token
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login "$REGISTRY" -u "$ACTOR" --password-stdin
+
+      - name: Point :release at this tag's existing image (the exact image that was released, no rebuild)
+        run: |
+          if ! docker buildx imagetools inspect "$IMAGE:$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "::error::No image $IMAGE:$GITHUB_REF_NAME in GHCR. Only releases published with this workflow can be rolled back to."
             exit 1
           fi
-          # The hook URL already has ?key=...; ref picks the commit. -o /dev/null: nothing from Render is printed.
-          curl --fail --silent --show-error --output /dev/null --request POST \
-            "${RENDER_DEPLOY_HOOK}&ref=${GITHUB_SHA}"
-          echo "Render accepted the deploy of $GITHUB_SHA"
+          docker buildx imagetools create -t "$IMAGE:release" "$IMAGE:$GITHUB_REF_NAME"
 
-      - name: Smoke test the live service
+  smoke-test:
+    needs: [check-ref, publish, rollback]
+    if: always() && (needs.publish.result == 'success' || needs.rollback.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Smoke test the live service until it runs this commit
         env:
           SERVICE_URL: ${{ vars.SERVICE_URL }}
         run: |
           if [ -z "$SERVICE_URL" ]; then
-            echo "::error::Repository variable SERVICE_URL is not set (docs/DEPLOY.md, step 3)."
+            echo "::error::Repository variable SERVICE_URL is not set (docs/DEPLOY.md)."
             exit 1
           fi
-          # Standard library only: no environment needed. The free tier builds slowly, hence 15 minutes.
-          python3 scripts/smoke_test.py --url "$SERVICE_URL" --expect-commit "$GITHUB_SHA" --timeout 900
+          # Standard library only. The host polls every minute and canary-tests first, so allow 15 minutes.
+          python3 scripts/smoke_test.py --url "$SERVICE_URL" --expect-commit "$GITHUB_SHA" \
+            --expect-version "$GITHUB_REF_NAME" --timeout 900
 
       - name: Summary
         if: always()
         env:
           SERVICE_URL: ${{ vars.SERVICE_URL }}
           OUTCOME: ${{ job.status }}
+          IMAGE: ${{ needs.check-ref.outputs.image }}
+          MODE: ${{ needs.check-ref.outputs.mode }}
         run: |
           {
-            echo "### Deploy $GITHUB_REF_NAME: $OUTCOME"
+            echo "### Deploy $GITHUB_REF_NAME ($MODE): $OUTCOME"
             echo ""
             echo "| | |"
             echo "| --- | --- |"
             echo "| Commit | \`$GITHUB_SHA\` |"
-            echo "| Service | $SERVICE_URL |"
+            echo "| Image | \`$IMAGE:$GITHUB_REF_NAME\` (also \`:release\`) |"
             echo "| Health | $SERVICE_URL/health |"
-            echo "| Rollback | docs/DEPLOY.md, Rollback |"
+            echo "| Docs | $SERVICE_URL/docs |"
           } >> "$GITHUB_STEP_SUMMARY"
