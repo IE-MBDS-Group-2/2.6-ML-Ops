@@ -238,7 +238,7 @@ def test_unit_guard_report_is_strict_json_when_the_baseline_trades_nothing():
     assert report["cost_ratio"]["value"] is None and report["cost_ratio"]["passed"] is False
     json.dumps(report, allow_nan=False)  # raises ValueError on Infinity or NaN
     reasons = evaluate.release_decision(True, report)["reasons"]
-    assert len(reasons) == 1 and "cost_ratio" in reasons[0] and "infinite" in reasons[0]
+    assert len(reasons) == 1 and "cost_ratio" in reasons[0] and "not finite" in reasons[0]
 
 
 def test_unit_release_decision_lists_every_failed_reason():

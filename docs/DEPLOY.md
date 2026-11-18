@@ -32,12 +32,15 @@ GitHub Release published -> deploy.yml: CI again on that commit -> Render deploy
 ## Dry run (once, before the first release)
 
 1. Render service -> Settings -> Branch: `dev`.
-2. GitHub -> Actions -> deploy -> Run workflow -> Use workflow from: `dev` -> Run.
+2. GitHub -> Releases -> Draft a new release -> tag `v1.1.0-rc1` on `dev` -> tick "Set as a pre-release" ->
+   Publish. That runs `deploy.yml` from the tag (Run workflow only works once `deploy.yml` is on the default
+   branch, `main`).
 3. Green means CI passed, Render built the image and the live `/health` reported that commit. Rule-only mode is
    expected (`policy: "rule"`).
-4. Check that a failure shows: run it once with `SERVICE_URL` pointing at a wrong address; the smoke test step
-   must go red. Put `SERVICE_URL` back.
+4. Check a failure shows: rerun the deploy run with `SERVICE_URL` pointing at a wrong address; the smoke test
+   step must go red. Put `SERVICE_URL` back.
 5. Render service -> Settings -> Branch: back to `main`.
+   - Delete the `v1.1.0-rc1` release and tag afterwards.
 
 ## Release
 
@@ -53,6 +56,7 @@ Put the previous release back, code and all:
 
 1. GitHub -> Actions -> deploy -> Run workflow -> Use workflow from -> **Tags** -> the previous release
    (e.g. `v1.1.0`) -> Run. It reruns CI on that commit, deploys that exact commit and smoke-tests it.
+   (Run workflow appears once `deploy.yml` is on `main`, i.e. from v1.1.0 on.)
 2. Render: set `APP_VERSION` back to that tag (Save only).
 
 To roll back only the model (the code is fine): in W&B move the alias `prod` back to the previous model version,
