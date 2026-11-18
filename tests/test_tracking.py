@@ -215,3 +215,61 @@ def test_unit_log_prediction_batch_skips_an_empty_batch(monkeypatch):
     tracking.log_prediction_batch(run, [])
     run.log.assert_not_called()
     assert fake_wandb.mock_calls == []
+
+
+def _serve_run(*tables: object) -> MagicMock:
+    """A fake serve run whose logged artifacts hold the given prediction tables, plus one artifact of another type."""
+    artifacts = []
+    for table in tables:
+        artifact = MagicMock(type="run_table")
+        artifact.get.return_value = table
+        artifacts.append(artifact)
+    artifacts.append(MagicMock(type="model"))
+    run = MagicMock()
+    run.logged_artifacts.return_value = artifacts
+    return run
+
+
+def test_unit_fetch_prediction_batches_joins_every_serve_table(monkeypatch):
+    fake_wandb = _fake_wandb(monkeypatch)
+    batch = MagicMock()
+    batch.get_dataframe.side_effect = [pd.DataFrame({"fallback": [True]}), pd.DataFrame({"fallback": [False]})]
+    api = fake_wandb.Api.return_value
+    api.runs.return_value = [_serve_run(batch, None), _serve_run(batch)]   # None: a run_table that is not ours
+    answers = tracking.fetch_prediction_batches(_env("online"), "test-project")
+    api.runs.assert_called_once_with("test-team/test-project", filters={"jobType": "serve"})
+    assert answers["fallback"].tolist() == [True, False]
+
+
+def test_unit_fetch_prediction_batches_empty_without_serve_runs(monkeypatch):
+    fake_wandb = _fake_wandb(monkeypatch)
+    fake_wandb.Api.return_value.runs.return_value = []
+    assert tracking.fetch_prediction_batches(_env("online"), "test-project").empty
+
+
+def test_unit_fetch_prediction_batches_turns_wandb_errors_into_file_not_found(monkeypatch):
+    fake_wandb = _fake_wandb(monkeypatch)
+    fake_wandb.errors.Error = wandb.errors.Error  # the real class, so the except clause can match it
+    fake_wandb.Api.side_effect = wandb.errors.CommError("W&B could not be reached")
+    with pytest.raises(FileNotFoundError, match="test-team/test-project"):
+        tracking.fetch_prediction_batches(_env("online"), "test-project")
+
+
+def test_unit_log_limit_chart_draws_the_limit_beside_the_series(monkeypatch):
+    fake_wandb = _fake_wandb(monkeypatch)
+    run = MagicMock()
+    values = pd.Series([0.4, 0.6], index=pd.to_datetime(["2026-11-13", "2026-11-20"]), name="fallback rate")
+    tracking.log_limit_chart(run, "monitor/fallback_rate", values, 0.5, "Fallback rate")
+    chart = fake_wandb.plot.line_series.call_args.kwargs
+    assert chart["xs"] == [1, 2]
+    assert chart["ys"] == [[0.4, 0.6], [0.5, 0.5]]
+    assert chart["keys"] == ["fallback rate", "retrain limit"]
+    table = fake_wandb.Table.call_args.kwargs["dataframe"]
+    assert table["week"].tolist() == ["2026-11-13", "2026-11-20"]
+    assert set(run.log.call_args.args[0]) == {"monitor/fallback_rate", "monitor/fallback_rate_table"}
+
+
+def test_unit_log_limit_chart_does_nothing_with_run_none(monkeypatch):
+    fake_wandb = _fake_wandb(monkeypatch)
+    tracking.log_limit_chart(None, "monitor/drift_psi", pd.Series([0.1]), 0.2, "Drift")
+    assert fake_wandb.mock_calls == []

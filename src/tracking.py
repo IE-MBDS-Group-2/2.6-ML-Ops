@@ -212,3 +212,45 @@ def download_model(env: dict[str, str], project: str, name: str, alias: str) -> 
     model_file = _find_joblib(folder, address)
     logger.info("Downloaded model %s to %s", address, model_file)
     return model_file
+
+
+def fetch_prediction_batches(env: dict[str, str], project: str) -> pd.DataFrame:
+    """Download every batch of live answers the API logged (PREDICTION_TABLE in each serve run) as one table.
+
+    Inputs:  env, the values from config.load_env (WANDB_ENTITY, WANDB_API_KEY); project, the W&B project.
+    Outputs: one row per logged answer (as_of, recommendation, probability, fallback, model_version,
+             latency_ms); empty when no serve run has logged a batch yet.
+    Why:     the monitoring run measures the weekly fallback rate from what the service really answered.
+    Raises:  FileNotFoundError if W&B cannot be reached or refuses the key.
+    """
+    path = f"{env['WANDB_ENTITY']}/{project}"
+    try:
+        api = wandb.Api(api_key=env["WANDB_API_KEY"] or None)
+        found = [artifact.get(PREDICTION_TABLE)
+                 for run in api.runs(path, filters={"jobType": "serve"})
+                 for artifact in run.logged_artifacts() if artifact.type == "run_table"]
+        tables = [table.get_dataframe() for table in found if table is not None]
+    except wandb.errors.Error as error:
+        raise FileNotFoundError(f"Could not read the serve runs of {path} from W&B ({type(error).__name__}). "
+                                "Check WANDB_API_KEY, WANDB_ENTITY and the network.") from error
+    logger.info("Fetched %d prediction batches from the serve runs of %s", len(tables), path)
+    return pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
+
+
+def log_limit_chart(run: wandb.Run | None, name: str, values: pd.Series, limit: float, title: str) -> None:
+    """Log a weekly series and its retrain limit as one W&B line chart, with the series also kept as a table.
+
+    Inputs:  run, the W&B run or None; name, the chart's key in W&B; values, one number per week (indexed by
+             week); limit, the retrain threshold drawn as a flat line; title, the chart title.
+    Outputs: None. With run=None nothing happens.
+    Why:     the chart shows at a glance how close each week came to the threshold that triggers a retrain.
+    """
+    if run is None:
+        return
+    weeks = list(range(1, len(values) + 1))
+    chart = wandb.plot.line_series(xs=weeks, ys=[values.tolist(), [limit] * len(values)],
+                                   keys=[values.name or "value", "retrain limit"], title=title, xname="week")
+    table = pd.DataFrame({"week": [str(day.date()) for day in values.index], "value": values.values,
+                          "retrain_limit": limit})
+    run.log({name: chart, f"{name}_table": wandb.Table(dataframe=table)})
+    logger.info("Logged chart %s to W&B: %d weeks, limit %s", name, len(values), limit)
