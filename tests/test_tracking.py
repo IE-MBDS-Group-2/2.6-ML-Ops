@@ -53,8 +53,9 @@ def test_unit_every_function_does_nothing_with_run_none(monkeypatch, tmp_path):
         tracking.log_model(None, tmp_path / "model.joblib", "rebalance-model", {"gate_met": True}),
         tracking.finish_run(None),
         tracking.finish_run(None, failed=True),
+        tracking.log_prediction_batch(None, [{"recommendation": 1.0}]),
     ]
-    assert results == [None] * 6
+    assert results == [None] * 7
     assert fake_wandb.mock_calls == []
 
 
@@ -196,3 +197,21 @@ def test_unit_log_dataset_builds_a_dataset_artifact(monkeypatch, tmp_path):
     artifact = fake_wandb.Artifact.return_value
     artifact.add_file.assert_called_once_with(str(data_file))
     run.log_artifact.assert_called_once_with(artifact)
+
+
+def test_unit_log_prediction_batch_sends_one_table(monkeypatch):
+    fake_wandb = _fake_wandb(monkeypatch)
+    run = MagicMock()
+    rows = [{"as_of": "2025-12-31", "recommendation": 1.0}, {"as_of": "2025-12-31", "recommendation": 0.0}]
+    tracking.log_prediction_batch(run, rows)
+    sent = fake_wandb.Table.call_args.kwargs["dataframe"]
+    assert list(sent["recommendation"]) == [1.0, 0.0]
+    run.log.assert_called_once_with({tracking.PREDICTION_TABLE: fake_wandb.Table.return_value})
+
+
+def test_unit_log_prediction_batch_skips_an_empty_batch(monkeypatch):
+    fake_wandb = _fake_wandb(monkeypatch)
+    run = MagicMock()
+    tracking.log_prediction_batch(run, [])
+    run.log.assert_not_called()
+    assert fake_wandb.mock_calls == []
