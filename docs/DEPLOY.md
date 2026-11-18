@@ -1,77 +1,71 @@
 # Deploy runbook
 
 How a release reaches the live service, and how to put the previous one back. The workflow is
-`.github/workflows/deploy.yml`; this page is everything a person does around it.
+`.github/workflows/deploy.yml`; the service runs on a self-hosted machine that follows the image in GHCR.
 
 ```text
-GitHub Release published -> deploy.yml: CI again on that commit -> Render deploy hook (?ref=<commit>)
-                         -> Render builds the Dockerfile -> smoke_test.py waits until /health reports <commit>
+GitHub Release published -> deploy.yml: CI on that commit -> one docker build (commit and version baked in)
+  -> push ghcr.io/ie-mbds-group-2/2.6-ml-ops:<sha>, :<tag>, :release
+  -> the host pulls :release (every minute), canary-tests it on a side port, swaps it in when /health is ok
+  -> smoke_test.py waits until https://etf-api.mpholdings.co/health reports that commit and that version
 ```
+
+**Why this design.** The image CI built and tested is the exact image that runs: it is built once, pushed with
+immutable tags (`<sha>`, `<tag>`) and a moving tag (`release`) that the host follows. The host never needs
+credentials from GitHub, CI never needs access to the host, and no port is open on it (Cloudflare tunnel).
 
 ## One-time set-up (admin)
 
-1. **Render service.** Render Dashboard -> New -> Web Service -> connect GitHub and pick
-   `IE-MBDS-Group-2/2.6-ML-Ops`. Language **Docker**, branch **`main`**, region Frankfurt, instance type
-   **Free**. Under Advanced: health check path **`/health`**, Auto-Deploy **Off** (only the workflow deploys).
-2. **Environment variables on Render** (the names in `.env.example`):
-
-   | Name | Value now | Why |
-   | --- | --- | --- |
-   | `MODEL_SOURCE` | `local` | The image has no model file, so the API serves today's rule (decision D8) |
-   | `WANDB_MODE` | `disabled` | Nothing to download while no model has passed the gate |
-   | `APP_VERSION` | the release tag, e.g. `v1.1.0` | Shown on `/docs` and `/health`; a label only, the deploy checks the commit |
-
-   When a model passes the gate and a person has moved the W&B alias `prod` to it: set `MODEL_SOURCE=wandb`,
-   `WANDB_MODE=online`, `WANDB_ENTITY=ie-mbds-group-2`, `WANDB_MODEL_ALIAS=prod` and `WANDB_API_KEY` (as a
-   Render secret value, never in the repo), then redeploy the current release (Rollback, below, with the same tag).
-3. **GitHub.** Render service -> Settings -> Deploy Hook: copy the URL. GitHub repo -> Settings -> Secrets and
-   variables -> Actions:
-   - Secrets -> New repository secret `RENDER_DEPLOY_HOOK` = the hook URL. It contains a key: paste it only there.
-   - Variables -> New repository variable `SERVICE_URL` = `https://<service-name>.onrender.com` (no trailing `/`).
+1. **Repository variable** (Settings -> Secrets and variables -> Actions -> Variables): `SERVICE_URL` =
+   `https://etf-api.mpholdings.co` (no trailing `/`). No secret is needed: the workflow pushes with its own token.
+2. **Organisation:** Settings -> Packages: allow members to create public packages, and allow GitHub Actions to
+   publish packages for this repository.
+3. **After the first push** (the dry run below): Organisation -> Packages -> `2.6-ml-ops` -> Package settings ->
+   Change visibility -> **Public**, so the host can pull without a token. The image label links the package to
+   this repository.
+4. **The host** (operator side, already done): follows `:release` with a one-minute timer, canary-tests a new image
+   on a side port, swaps only when `/health` is ok, restores the previous image if the new one turns unhealthy, and
+   alerts the operator on deploy, refusal and rollback. It sets no `APP_VERSION` or commit: both come from the image.
 
 ## Dry run (once, before the first release)
 
-1. Render service -> Settings -> Branch: `dev`.
-2. GitHub -> Releases -> Draft a new release -> tag `v1.1.0-rc1` on `dev` -> tick "Set as a pre-release" ->
-   Publish. That runs `deploy.yml` from the tag (Run workflow only works once `deploy.yml` is on the default
-   branch, `main`).
-3. Green means CI passed, Render built the image and the live `/health` reported that commit. Rule-only mode is
-   expected (`policy: "rule"`).
-4. Check a failure shows: rerun the deploy run with `SERVICE_URL` pointing at a wrong address; the smoke test
-   step must go red. Put `SERVICE_URL` back.
-5. Render service -> Settings -> Branch: back to `main`.
-   - Delete the `v1.1.0-rc1` release and tag afterwards.
+1. GitHub -> Releases -> Draft a new release -> tag `v1.1.0-rc1` on `dev` -> tick **Set as a pre-release** -> Publish.
+2. Actions -> deploy: `check-ref`, `ci`, `publish` and `smoke-test` go green. The smoke test passes when
+   `/health` shows `"version": "v1.1.0-rc1"` and the dev commit (the host switches in about a minute).
+3. Do step 3 of the set-up (package public) if the host could not pull.
+4. Check a failure shows: re-run `smoke-test` with `SERVICE_URL` pointing at a wrong address; it must go red.
+   Put `SERVICE_URL` back.
+5. Delete the `v1.1.0-rc1` release and tag afterwards (its image stays in GHCR, which does no harm).
 
 ## Release
 
 1. Release PR `dev` into `main`, approved, merge commit.
-2. Render: set `APP_VERSION` to the new tag with **Save only** (not "Save, rebuild and deploy").
-3. GitHub -> Releases -> Draft a new release -> tag `vX.Y.Z` on `main` -> notes -> **Publish**. That starts
-   `deploy.yml`. Watch it in Actions; the run summary has the live links.
-4. By hand: open `<SERVICE_URL>/docs`, call `/health`, and send `scripts/sample_request.json` to `/predict`.
+2. GitHub -> Releases -> Draft a new release -> tag `vX.Y.Z` on `main` -> notes -> **Publish**.
+3. Watch Actions -> deploy; the run summary has the live links. By hand: `/health` shows the new version and commit;
+   `/docs` opens; `scripts/sample_request.json` to `/predict` answers 200.
 
 ## Rollback
 
-Put the previous release back, code and all:
-
-1. GitHub -> Actions -> deploy -> Run workflow -> Use workflow from -> **Tags** -> the previous release
-   (e.g. `v1.1.0`) -> Run. It reruns CI on that commit, deploys that exact commit and smoke-tests it.
-   (Run workflow appears once `deploy.yml` is on `main`, i.e. from v1.1.0 on.)
-2. Render: set `APP_VERSION` back to that tag (Save only).
+1. GitHub -> Actions -> deploy -> **Run workflow** -> Use workflow from -> **Tags** -> the release to put back
+   (e.g. `v1.1.0`) -> Run. ("Run workflow" appears once `deploy.yml` is on `main`, i.e. from `v1.1.0` on.)
+2. The run skips the build: it points `:release` at that tag's existing image (the exact image released then) and
+   smoke-tests it. The host swaps it in like any release.
 
 To roll back only the model (the code is fine): in W&B move the alias `prod` back to the previous model version,
-then Render -> Manual Deploy -> Restart service. The API loads whatever `prod` points to at start-up.
+then restart the container on the host. The API loads whatever `prod` points to at start-up (with
+`MODEL_SOURCE=wandb`; today the service runs `MODEL_SOURCE=local` and serves today's rule).
 
 ## When it goes wrong
 
 | Symptom | Likely cause | Next |
 | --- | --- | --- |
-| Hook step: `error: 404` | The commit is not on GitHub, or the hook URL is wrong | Copy the hook again into the secret |
-| Smoke test times out on health | The build failed or is slow (free tier) | Render -> Events and Logs for that deploy |
-| Smoke test: wrong commit | The new instance never became healthy, so Render kept the old one | Render deploy logs; fix, release a patch |
-| Smoke test: `/predict` problem | The service runs but answers wrongly | `scripts/smoke_test.py` locally against `docker run` |
+| `publish`: denied pushing to ghcr.io | the organisation does not let Actions publish packages | set-up step 2 |
+| Smoke test waits, commit never changes | the host could not pull (package private) or refused the canary | set-up step 3; host journal and alerts |
+| Smoke test: wrong version | the image was built without `APP_VERSION` | check the `publish` step's build arguments |
+| Rollback: no image for the tag | that tag was released before this workflow existed | release it again, or pick a newer tag |
+| `/predict` answers but not from outside | Cloudflare or ISP blocking (e.g. during LaLiga broadcasts in Spain) | try another network; check the tunnel |
 
-## Free tier
+## Public paths
 
-The service sleeps after about 15 minutes without requests; the first request then takes up to a minute. Before a
-demo, open `/health` a few minutes early.
+The tunnel serves only `/health`, `/predict`, `/docs` and `/openapi.json` (everything else 404), with a rate limit
+of 20 requests a second per client (burst 100).
