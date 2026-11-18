@@ -586,15 +586,16 @@ def _write_trades(approved: Pipeline | None, columns: list[str], cfg: dict, path
     return True
 
 
-def _versions_tried(cfg: dict, grid_trials: int, scores: dict) -> int:
-    """How many model versions were looked at on validation, for the multiple-testing correction.
+def _versions_tried(cfg: dict, scores: dict) -> int:
+    """How many model versions were scored on validation, for the multiple-testing correction.
 
-    Inputs:  cfg (reads model.type and rl.seeds); grid_trials, from _select_model_params (1 when off);
-             scores, from _candidate ("rl" is there when the agent was trained).
-    Outputs: grid trials for the classifier when it ran, plus one per RL seed when the agent ran.
-    Why:     every version scored on validation counts, or the robustness report overstates the evidence.
+    Inputs:  cfg (reads model.type and rl.seeds); scores, from _candidate ("rl" is there when the agent was trained).
+    Outputs: one for the classifier when it ran, plus one per RL seed when the agent ran.
+    Why:     every version scored on validation counts, or the robustness report overstates the evidence. The
+             grid-search trials do not count: they are scored on the train years only (walk-forward), never on
+             validation. The simple-rule challengers are a separate family, reported with their own table.
     """
-    tried = grid_trials if cfg["model"]["type"] == "classifier" else 0
+    tried = 1 if cfg["model"]["type"] == "classifier" else 0
     return tried + (len(cfg["rl"]["seeds"]) if "rl" in scores else 0)
 
 
@@ -620,7 +621,7 @@ def run(cfg: dict, tracker: object = None) -> dict:
         cfg["portfolio"]["first_decision_date"], cfg["data"]["end"], cfg)
     # 3. Select the settings on the train years (when enabled), fit the candidate (model.type) on them,
     #    and score it on validation.
-    cfg, versions_tried = _select_model_params(table, market_data, cfg, paths, tracker)
+    cfg, _grid_trials = _select_model_params(table, market_data, cfg, paths, tracker)   # trials: train years only
     model, columns, scores = _candidate(table, market_data, cfg)
     # 4. On validation: the quality gate, the guards and the simple-rule challengers.
     metrics, chosen = _validation_report((model, columns, scores), market_data, cfg, paths, tracker)
@@ -630,7 +631,7 @@ def run(cfg: dict, tracker: object = None) -> dict:
         metrics["test"], test_diagnostics = _test_audit(model, columns, market_data, cfg, chosen)
         tracking.log_metrics(tracker, _numbers(metrics["test"]), prefix="test/")
     _write_robustness(model, columns, market_data, cfg, paths["robustness"], tracker, test_diagnostics,
-                      _versions_tried(cfg, versions_tried, scores))
+                      _versions_tried(cfg, scores))
     approved = _keep_or_drop_model(model, metrics, paths, cfg, tracker)
     # Reported, never gated: the traditional portfolios on the validation years.
     _write_benchmarks(market_data, cfg, paths, metrics, tracker)
