@@ -250,7 +250,7 @@ def release_decision(gate_met: bool, guards: dict) -> dict:
             raise ValueError(f"release_decision: guard {name!r} must have value, limit and passed (from "
                              f"guard_report), got {sorted(entry)}.")
         if not entry["passed"]:
-            value = "infinite" if entry["value"] is None else f"{entry['value']:.6g}"
+            value = "not finite" if entry["value"] is None else f"{entry['value']:.6g}"
             reasons.append(f"guard {name} failed: {value} is beyond the limit {entry['limit']:.6g}")
     decision = {"release": not reasons, "reasons": reasons}
     logger.info("Release decision: %s (%d blocking reasons)", "release" if decision["release"] else "do not release",

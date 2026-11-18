@@ -78,6 +78,16 @@ def test_unit_load_config_rejects_a_tolerance_band_that_is_not_a_positive_number
         _load_changed(tmp_path, "rebalancing", "tolerance_band", band)
 
 
+@pytest.mark.parametrize("seeds", [[], None, 3, "0,1", [0, 1.5], [True], [0, None]])
+def test_unit_load_config_rejects_rl_seeds_that_are_not_a_non_empty_list_of_ints(tmp_path, seeds):
+    with pytest.raises(ValueError, match="rl.seeds"):
+        _load_changed(tmp_path, "rl", "seeds", seeds)
+
+
+def test_unit_load_config_accepts_rl_seeds_as_a_list_of_ints(tmp_path):
+    assert config.load_config(_write(tmp_path / "config.yaml", _valid()))["rl"]["seeds"] == [0, 1, 2, 3, 4]
+
+
 def test_unit_load_config_accepts_every_review_and_calendar_pair(tmp_path):
     # The allowed lists guarantee the calendar is never more frequent than the review.
     for review in config.ALLOWED_VALUES[("rebalancing", "review")]:
