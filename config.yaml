@@ -9,6 +9,7 @@ paths:
   model: "models/model.joblib"
   predictions: "reports/predictions.csv"
   metrics: "reports/metrics.json"
+  monitoring: "reports/monitoring.json"
   log_file: "logs/pipeline.log"
   positions: "data/inference/positions.csv"          # optional: one portfolio or sleeve (DECISION D9)
   proposed_portfolio: "reports/proposed_portfolio.csv"
@@ -125,6 +126,18 @@ api:                             # DECISION D9
   min_history_days: 61           # 12-week return (60 trading days) plus one
   monitoring_batch_size: 20
 
+monitoring:                      # README open gap 12, model card "What triggers a retrain"; scripts/monitor_report.py
+  psi_bins: 10                   # deciles of the train years
+  psi_limit: 0.2                 # drift alert: the usual PSI reading, above 0.2 is a real shift (0.1 to 0.2: watch)
+  tickers: ["SPY", "EFA", "IEF", "GLD"]   # daily returns compared; BIL left out: its return is the T-bill rate,
+                                 # near 0 in most train years and ~5% since 2022, so it would alert for good
+  window_days: 180               # trading days each Friday looks back: noise alone gives PSI ~ 9/180 = 0.05;
+                                 # on synthetic prices, no false alarm and a 1.5x volatility shift caught in ~100 days
+  fallback_limit: 0.5            # retrain when the weekly fallback rate is above this...
+  fallback_weeks: 4              # ...in each of this many weeks in a row
+  date_column: "as_of"           # columns of the serve table the API logs (tracking.PREDICTION_TABLE)
+  fallback_column: "fallback"
+
 selection:                       # DECISION D14: train years only; validation and test stay unseen
   enabled: false
   first_train_end: "2012-12-31"
@@ -153,11 +166,16 @@ benchmarks:                      # DECISION D19: reported, never gated; fitted o
   enabled: true
   methods: ["min_variance", "max_sharpe", "mean_variance", "risk_parity"]
   risk_aversion: 3.0             # ESTIMATE, mean_variance only
+  cash_ticker: "BIL"             # max_sharpe: returns in excess of this ticker, which gets weight 0; null = none
 
 guards:                          # README "Goal and success metrics"; reported, not gated
   max_return_shortfall: 0.0025   # annual net return no more than 0.25 points below the baseline
   max_cost_ratio: 2.0            # annual trading cost no more than 2 x the baseline's
   max_tracking_error: 0.012      # X = 2 x today's rule on validation 2020-21 (0.0059); agreed with Miguel (#64)
+
+robustness:                      # README robustness checks; reported, never gated
+  bootstrap_draws: 1999          # ESTIMATE: block-bootstrap draws for each challenger comparison
+  bootstrap_block_weeks: 4       # ESTIMATE: weeks per block, so short-range dependence is kept
 
 challengers:                     # README simple-rule challengers (team ASSUMPTIONS); never tuned on validation
   bands: [0.025, 0.015]

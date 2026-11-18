@@ -83,6 +83,7 @@ def load_config(path: Path = CONFIG_PATH) -> dict:
     _check_allowed_values(cfg)
     _check_target_weights(cfg)
     _check_rebalancing(cfg)
+    _check_rl_seeds(cfg)
     logger.info("Config loaded from %s: %d sections", path, len(cfg))
     return cfg
 
@@ -122,6 +123,16 @@ def _check_rebalancing(cfg: dict) -> None:
     if not isinstance(band, (int, float)) or isinstance(band, bool) or band <= 0:
         raise ValueError(f"rebalancing.tolerance_band is {band!r}. Give a number above 0, in percentage points "
                          "away from target (for example 5).")
+
+
+def _check_rl_seeds(cfg: dict) -> None:
+    """Raise if rl.seeds is present but is not a non-empty list of integers (the agent takes the median seed)."""
+    if "rl" not in cfg:
+        return
+    seeds = (cfg["rl"] or {}).get("seeds")
+    if (not isinstance(seeds, list) or not seeds
+            or not all(isinstance(seed, int) and not isinstance(seed, bool) for seed in seeds)):
+        raise ValueError(f"rl.seeds is {seeds!r}. Give a non-empty list of integers (for example [0, 1, 2, 3, 4]).")
 
 
 def resolve_paths(cfg: dict, root: Path = PROJECT_ROOT) -> dict[str, Path]:

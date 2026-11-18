@@ -29,30 +29,55 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
-from src import costs
+from src import config, costs
 
 logger = logging.getLogger(__name__)
 RULE_ACTION_COLUMN = "rule_action"  # today's rule in the decision table; never a model input
 
 _SUM_TOLERANCE = 1e-9    # target weights must sum to 1 within this
 _TIE_TOLERANCE = 1e-12   # rewards closer than this count as a tie (the smaller action wins)
+_REVIEWS = config.ALLOWED_VALUES[("rebalancing", "review")]          # daily, weekly, monthly
+_REVIEW_PERIODS = {"daily": "D", "weekly": "W-SUN", "monthly": "M"}  # pandas period: one review per period
+_PERIODS_PER_YEAR = {"daily": 252, "weekly": 52, "monthly": 12}      # reviews in a year, to annualise
 
 
-def decision_dates(trading_days: pd.DatetimeIndex, start: str, end: str) -> pd.DatetimeIndex:
-    """Pick the last trading day of each calendar week inside [start, end].
+def _check_review(review: str) -> None:
+    """Raise if review is not one of config.ALLOWED_VALUES for rebalancing.review."""
+    if review not in _REVIEWS:
+        raise ValueError(f"rebalancing.review is {review!r}. Use one of {', '.join(_REVIEWS)} in config.yaml.")
 
-    Inputs:  trading_days, the common calendar (index of close_wide); start and end as YYYY-MM-DD, inclusive.
-    Outputs: a DatetimeIndex, one date per week (a Thursday when Friday is a holiday).
-    Why:     the portfolio manager decides once a week, after the last close of the week.
-    Raises:  ValueError if no trading day falls inside [start, end].
+
+def review_frequency(cfg: dict) -> str:
+    """The review frequency of a run: rebalancing.review from config (daily, weekly or monthly)."""
+    return cfg["rebalancing"]["review"]
+
+
+def periods_per_year(review: str) -> int:
+    """Reviews in a year for a review frequency (daily 252, weekly 52, monthly 12), to annualise per-review numbers.
+
+    Raises:  ValueError if review is not daily, weekly or monthly.
     """
+    _check_review(review)
+    return _PERIODS_PER_YEAR[review]
+
+
+def decision_dates(trading_days: pd.DatetimeIndex, start: str, end: str, review: str) -> pd.DatetimeIndex:
+    """Pick the last trading day of each review period (day, week or month) inside [start, end].
+
+    Inputs:  trading_days, the common calendar (index of close_wide); start and end as YYYY-MM-DD, inclusive;
+             review, rebalancing.review from config: daily, weekly (today's process) or monthly.
+    Outputs: a DatetimeIndex, one date per period (weekly: a Thursday when Friday is a holiday).
+    Why:     the portfolio manager decides after the last close of each review period.
+    Raises:  ValueError if review is not daily, weekly or monthly, or no trading day falls inside [start, end].
+    """
+    _check_review(review)
     days = pd.DatetimeIndex(trading_days)
     in_range = days[(days >= pd.Timestamp(start)) & (days <= pd.Timestamp(end))]
     if in_range.empty:
         raise ValueError(f"No trading days between {start} and {end}. Check the dates in config.yaml.")
-    last_per_week = pd.Series(in_range, index=in_range).groupby(in_range.to_period("W-SUN")).max()
-    result = pd.DatetimeIndex(last_per_week.to_numpy())
-    logger.info("Found %d decision dates from %s to %s", len(result), result[0].date(), result[-1].date())
+    last_per_period = pd.Series(in_range, index=in_range).groupby(in_range.to_period(_REVIEW_PERIODS[review])).max()
+    result = pd.DatetimeIndex(last_per_period.to_numpy())
+    logger.info("Found %d %s decision dates from %s to %s", len(result), review, result[0].date(), result[-1].date())
     return result
 
 
@@ -179,7 +204,7 @@ def _prepare_run(prices: tuple[pd.DataFrame, pd.DataFrame], market_features: pd.
     close_wide, volume_wide = prices
     tickers = _check_target(close_wide, target)
     days = close_wide.index[close_wide.index <= pd.Timestamp(period[1])]
-    decisions = decision_dates(days, *period)
+    decisions = decision_dates(days, *period, review_frequency(cfg))
     days = days[days >= decisions[0]]
     schedule = execution_schedule(days, decisions)
     window = cfg["costs"]["slippage"]["adv_window"]
@@ -378,7 +403,7 @@ def build_decision_table(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, ma
     Why:     labels say which action would have done best one window ahead, net of costs and drawdown.
     """
     days = close_wide.index[close_wide.index <= pd.Timestamp(end)]
-    policy = make_current_rule_policy(target, decision_dates(days, start, end), cfg)
+    policy = make_current_rule_policy(target, decision_dates(days, start, end, review_frequency(cfg)), cfg)
     daily, decisions = simulate(close_wide, volume_wide, market_features, target, policy, start, end, cfg)
     target = target.reindex(close_wide.columns)
     target_column = _problem_column(cfg, "target_column")
@@ -459,7 +484,8 @@ def live_state(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_featu
     book = {"weights": weights.reindex(tickers).astype(float), "value": 1.0 + drawdown, "peak": 1.0,
             "weeks": weeks_since_rebalance}
     state = _state_row(day, book, run, cfg)
-    decisions = decision_dates(close_wide.index, str(close_wide.index[0].date()), str(day.date()))
+    decisions = decision_dates(close_wide.index, str(close_wide.index[0].date()), str(day.date()),
+                               review_frequency(cfg))
     state[RULE_ACTION_COLUMN] = make_current_rule_policy(run["target"], decisions, cfg)(state)
     logger.info("Live state on %s: max drift %.4f, today's rule %.1f", day.date(),
                 float((book["weights"] - run["target"]).abs().max()), state[RULE_ACTION_COLUMN])

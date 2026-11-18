@@ -4,7 +4,8 @@ tracking.py  [Experiment tracking with Weights & Biases]
 Purpose   Record each run's settings, data version, metrics and model in W&B, and fetch the promoted model
 Input     The config (tracking section), the values from .env, metrics, tables and file paths
 Output    A W&B run, or None when tracking is off; download_model returns the model file's path
-Used by   main.py (training run) and api.py (download_model, monitoring); main.py never imports wandb itself
+Used by   main.py (training run) and api.py (download_model, the serve run, log_prediction_batch);
+          main.py never imports wandb itself
 
 Why it matters
 - Every training run can be compared and audited afterwards: same settings, same data, same metrics
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 # W&B's own name for "the newest version". "prod" is never set in code: a person promotes a model in the W&B UI.
 LATEST_ALIAS = "latest"
+PREDICTION_TABLE = "serve/predictions"   # the W&B table each batch of live answers is logged to
+# What a W&B call can raise (its own errors, network and file errors, bad values). api.py catches these, so a
+# tracking failure never reaches a client.
+TRACKING_ERRORS = (wandb.Error, OSError, ValueError, RuntimeError)
 
 
 def _login(env: dict[str, str]) -> None:
@@ -95,6 +100,21 @@ def log_table(run: wandb.Run | None, name: str, table: pd.DataFrame) -> None:
         return
     run.log({name: wandb.Table(dataframe=table)})
     logger.info("Logged table %s to W&B: %d rows", name, len(table))
+
+
+def log_prediction_batch(run: wandb.Run | None, rows: list[dict]) -> None:
+    """Log a batch of live answers from the API to the serve run as one W&B table.
+
+    Inputs:  run, the serve run or None; rows, one dictionary per answer (as_of, recommendation, probability,
+             fallback, model_version, latency_ms).
+    Outputs: None. With run=None, or no rows, nothing happens.
+    Why:     monitoring: the fallback rate and the recommendations over time show when a retrain is due; one table
+             per batch keeps the number of W&B calls small.
+    """
+    if run is None or not rows:
+        return
+    run.log({PREDICTION_TABLE: wandb.Table(dataframe=pd.DataFrame(rows))})
+    logger.info("Logged a batch of %d predictions to W&B", len(rows))
 
 
 def finish_run(run: wandb.Run | None, failed: bool = False) -> None:
@@ -192,3 +212,45 @@ def download_model(env: dict[str, str], project: str, name: str, alias: str) -> 
     model_file = _find_joblib(folder, address)
     logger.info("Downloaded model %s to %s", address, model_file)
     return model_file
+
+
+def fetch_prediction_batches(env: dict[str, str], project: str) -> pd.DataFrame:
+    """Download every batch of live answers the API logged (PREDICTION_TABLE in each serve run) as one table.
+
+    Inputs:  env, the values from config.load_env (WANDB_ENTITY, WANDB_API_KEY); project, the W&B project.
+    Outputs: one row per logged answer (as_of, recommendation, probability, fallback, model_version,
+             latency_ms); empty when no serve run has logged a batch yet.
+    Why:     the monitoring run measures the weekly fallback rate from what the service really answered.
+    Raises:  FileNotFoundError if W&B cannot be reached or refuses the key.
+    """
+    path = f"{env['WANDB_ENTITY']}/{project}"
+    try:
+        api = wandb.Api(api_key=env["WANDB_API_KEY"] or None)
+        found = [artifact.get(PREDICTION_TABLE)
+                 for run in api.runs(path, filters={"jobType": "serve"})
+                 for artifact in run.logged_artifacts() if artifact.type == "run_table"]
+        tables = [table.get_dataframe() for table in found if table is not None]
+    except wandb.errors.Error as error:
+        raise FileNotFoundError(f"Could not read the serve runs of {path} from W&B ({type(error).__name__}). "
+                                "Check WANDB_API_KEY, WANDB_ENTITY and the network.") from error
+    logger.info("Fetched %d prediction batches from the serve runs of %s", len(tables), path)
+    return pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
+
+
+def log_limit_chart(run: wandb.Run | None, name: str, values: pd.Series, limit: float, title: str) -> None:
+    """Log a weekly series and its retrain limit as one W&B line chart, with the series also kept as a table.
+
+    Inputs:  run, the W&B run or None; name, the chart's key in W&B; values, one number per week (indexed by
+             week); limit, the retrain threshold drawn as a flat line; title, the chart title.
+    Outputs: None. With run=None nothing happens.
+    Why:     the chart shows at a glance how close each week came to the threshold that triggers a retrain.
+    """
+    if run is None:
+        return
+    weeks = list(range(1, len(values) + 1))
+    chart = wandb.plot.line_series(xs=weeks, ys=[values.tolist(), [limit] * len(values)],
+                                   keys=[values.name or "value", "retrain limit"], title=title, xname="week")
+    table = pd.DataFrame({"week": [str(day.date()) for day in values.index], "value": values.values,
+                          "retrain_limit": limit})
+    run.log({name: chart, f"{name}_table": wandb.Table(dataframe=table)})
+    logger.info("Logged chart %s to W&B: %d weeks, limit %s", name, len(values), limit)

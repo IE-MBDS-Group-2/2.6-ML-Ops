@@ -2,6 +2,8 @@
 
 Tiny synthetic prices only (business days, so every full week ends on a Friday). Never the real data/ folder.
 """
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -24,7 +26,13 @@ def make_cfg() -> dict:
         },
         "costs": {"aum": AUM, "model": "flat", "flat": {"rate": 0.001}, "slippage": {"adv_window": 20}},
         "problem": {"target_column": "best_action", "id_column": "decision_date"},
+        "rebalancing": {"review": "weekly"},
     }
+
+
+def with_review(review: str) -> dict:
+    """make_cfg with another rebalancing.review."""
+    return {**make_cfg(), "rebalancing": {"review": review}}
 
 
 def make_prices(start: str = "2024-01-01", periods: int = 60, seed: int = 0) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -42,7 +50,7 @@ def make_prices(start: str = "2024-01-01", periods: int = 60, seed: int = 0) -> 
 def test_unit_decision_dates_picks_last_trading_day_of_each_week():
     # Known value: Friday 12 Jan 2024 is a holiday, so that week's decision moves to Thursday 11 Jan.
     days = pd.bdate_range("2024-01-01", "2024-01-19").drop(pd.Timestamp("2024-01-12"))
-    result = portfolio.decision_dates(days, "2024-01-01", "2024-01-19")
+    result = portfolio.decision_dates(days, "2024-01-01", "2024-01-19", "weekly")
     expected = pd.DatetimeIndex(["2024-01-05", "2024-01-11", "2024-01-19"])
     assert list(result) == list(expected)
 
@@ -50,7 +58,58 @@ def test_unit_decision_dates_picks_last_trading_day_of_each_week():
 def test_unit_decision_dates_raises_when_no_trading_days_in_range():
     days = pd.bdate_range("2024-01-01", "2024-01-19")
     with pytest.raises(ValueError, match="No trading days"):
-        portfolio.decision_dates(days, "2025-01-01", "2025-12-31")
+        portfolio.decision_dates(days, "2025-01-01", "2025-12-31", "weekly")
+
+
+def test_unit_decision_dates_known_values_per_review():
+    # Business days of January 2024: 23 days, Monday 1 to Wednesday 31.
+    days = pd.bdate_range("2024-01-01", "2024-01-31")
+    weekly = portfolio.decision_dates(days, "2024-01-01", "2024-01-31", "weekly")
+    assert list(weekly) == list(pd.DatetimeIndex(["2024-01-05", "2024-01-12", "2024-01-19", "2024-01-26",
+                                                  "2024-01-31"]))  # the last week ends on Wednesday 31
+    assert list(portfolio.decision_dates(days, "2024-01-01", "2024-01-31", "daily")) == list(days)
+    assert list(portfolio.decision_dates(days, "2024-01-01", "2024-01-31", "monthly")) == [pd.Timestamp("2024-01-31")]
+
+
+def test_unit_decision_dates_monthly_takes_the_last_trading_day_of_each_month():
+    # Thursday 29 Feb 2024 is dropped (a holiday here): February's review moves to Wednesday 28.
+    days = pd.bdate_range("2024-01-01", "2024-03-29").drop(pd.Timestamp("2024-02-29"))
+    result = portfolio.decision_dates(days, "2024-01-01", "2024-03-29", "monthly")
+    assert list(result) == list(pd.DatetimeIndex(["2024-01-31", "2024-02-28", "2024-03-29"]))
+
+
+def test_unit_decision_dates_raises_on_unknown_review():
+    days = pd.bdate_range("2024-01-01", "2024-01-31")
+    with pytest.raises(ValueError, match="daily, weekly, monthly"):
+        portfolio.decision_dates(days, "2024-01-01", "2024-01-31", "hourly")
+
+
+def test_unit_periods_per_year_follows_the_review():
+    assert [portfolio.periods_per_year(review) for review in ("daily", "weekly", "monthly")] == [252, 52, 12]
+    with pytest.raises(ValueError, match="daily, weekly, monthly"):
+        portfolio.periods_per_year("hourly")
+
+
+def test_unit_weekly_default_reproduces_stage_2():
+    # tests/fixtures/decision_table_weekly_stage2.csv: this table built on dev before the review setting existed.
+    close, volume = make_prices(periods=60)
+    table = portfolio.build_decision_table(close, volume, pd.DataFrame(index=close.index), TARGET,
+                                           "2024-01-01", "2024-03-22", make_cfg())
+    expected = pd.read_csv(Path(__file__).parent / "fixtures" / "decision_table_weekly_stage2.csv",
+                           index_col="decision_date", parse_dates=["decision_date"])
+    pd.testing.assert_frame_equal(table, expected, check_dtype=False, check_freq=False, rtol=1e-9)
+
+
+def test_integration_decision_table_builds_for_each_review():
+    close, volume = make_prices(periods=120)
+    tables = {review: portfolio.build_decision_table(close, volume, pd.DataFrame(index=close.index), TARGET,
+                                                     "2024-01-01", "2024-06-14", with_review(review))
+              for review in ("daily", "weekly", "monthly")}
+    assert all(not table.empty for table in tables.values())
+    assert list(tables["daily"].columns) == list(tables["weekly"].columns) == list(tables["monthly"].columns)
+    assert len(tables["daily"]) > len(tables["weekly"]) > len(tables["monthly"])
+    month_ends = pd.DatetimeIndex(["2024-01-31", "2024-02-29", "2024-03-29", "2024-04-30", "2024-05-31"])
+    assert list(tables["monthly"].index[:-1]) == list(month_ends)
 
 
 # ---------- apply_action ----------
@@ -92,7 +151,7 @@ def test_unit_full_rebalance_cost_known_value():
 
 def test_unit_first_reward_date_is_after_execution_date():
     days = pd.bdate_range("2024-01-01", periods=30)
-    decisions = portfolio.decision_dates(days, "2024-01-01", "2024-02-28")
+    decisions = portfolio.decision_dates(days, "2024-01-01", "2024-02-28", "weekly")
     schedule = portfolio.execution_schedule(days, decisions)
     full = schedule.dropna()
     assert (full["execution_date"] > full.index).all()
@@ -101,7 +160,7 @@ def test_unit_first_reward_date_is_after_execution_date():
 
 def test_unit_reward_windows_join_with_no_gaps_or_overlaps():
     days = pd.bdate_range("2024-01-01", periods=30)
-    decisions = portfolio.decision_dates(days, "2024-01-01", "2024-02-28")
+    decisions = portfolio.decision_dates(days, "2024-01-01", "2024-02-28", "weekly")
     full = portfolio.execution_schedule(days, decisions).dropna()
     covered = []
     for _, row in full.iterrows():
@@ -121,7 +180,7 @@ def test_unit_execution_schedule_raises_on_decision_date_that_is_not_a_trading_d
 
 def test_unit_current_rule_policy_fires_only_on_first_decision_of_a_quarter_month():
     days = pd.bdate_range("2024-03-01", "2024-05-31")
-    decisions = portfolio.decision_dates(days, "2024-03-01", "2024-05-31")
+    decisions = portfolio.decision_dates(days, "2024-03-01", "2024-05-31", "weekly")
     policy = portfolio.make_current_rule_policy(TARGET, decisions, make_cfg())
 
     def at_target(date: str) -> pd.Series:
@@ -204,7 +263,7 @@ def test_unit_build_decision_table_one_row_per_week_labels_and_last_row_nan():
     close, volume = make_prices(periods=60)
     market = pd.DataFrame({"ret_4w_SPY": 0.0}, index=close.index)
     table = portfolio.build_decision_table(close, volume, market, TARGET, "2024-01-01", "2024-03-22", make_cfg())
-    weeks = portfolio.decision_dates(close.index, "2024-01-01", "2024-03-22")
+    weeks = portfolio.decision_dates(close.index, "2024-01-01", "2024-03-22", "weekly")
     assert table.index.name == "decision_date"
     assert list(table.index) == list(weeks)
     assert set(table["best_action"].iloc[:-2]) <= {0.0, 0.5, 1.0}
@@ -303,7 +362,7 @@ def test_integration_market_features_then_decision_table():
     close, volume = make_prices(periods=260)
     market = features.compute_market_features(close, return_weeks=[4, 12], vol_days=20)
     table = portfolio.build_decision_table(close, volume, market, TARGET, "2024-01-01", "2024-12-31", make_cfg())
-    weeks = portfolio.decision_dates(close.index, "2024-01-01", "2024-12-31")
+    weeks = portfolio.decision_dates(close.index, "2024-01-01", "2024-12-31", "weekly")
     assert len(table) == len(weeks)
     assert set(table["best_action"].iloc[:-2]) <= {0.0, 0.5, 1.0}
     assert table["best_action"].iloc[-2:].isna().all()

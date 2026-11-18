@@ -192,7 +192,13 @@ def _require(source: dict, keys: tuple[str, ...], label: str) -> None:
 
 
 def _guard(value: float, limit: float) -> dict:
-    """One guard entry: the measured value, its limit, and whether it stays within the limit."""
+    """One guard entry: the measured value, its limit, and whether it stays within the limit.
+
+    A value that is not finite (a cost ratio against a baseline that trades nothing) fails and is reported as
+    None, so metrics.json stays strict JSON (json.dumps would write Infinity, which strict readers reject).
+    """
+    if not np.isfinite(value):
+        return {"value": None, "limit": float(limit), "passed": False}
     return {"value": float(value), "limit": float(limit), "passed": bool(value <= limit + _GUARD_TOLERANCE)}
 
 
@@ -244,7 +250,8 @@ def release_decision(gate_met: bool, guards: dict) -> dict:
             raise ValueError(f"release_decision: guard {name!r} must have value, limit and passed (from "
                              f"guard_report), got {sorted(entry)}.")
         if not entry["passed"]:
-            reasons.append(f"guard {name} failed: {entry['value']:.6g} is beyond the limit {entry['limit']:.6g}")
+            value = "not finite" if entry["value"] is None else f"{entry['value']:.6g}"
+            reasons.append(f"guard {name} failed: {value} is beyond the limit {entry['limit']:.6g}")
     decision = {"release": not reasons, "reasons": reasons}
     logger.info("Release decision: %s (%d blocking reasons)", "release" if decision["release"] else "do not release",
                 len(reasons))

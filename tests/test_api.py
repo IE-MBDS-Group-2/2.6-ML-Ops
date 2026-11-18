@@ -3,6 +3,7 @@
 Never the real data/ folder, never the network: the model is built in a fixture and handed to the app.
 """
 import logging
+from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
@@ -302,3 +303,92 @@ def test_unit_missing_wandb_alias_is_rule_only(monkeypatch):
 
     monkeypatch.setattr(api.tracking, "download_model", download)
     assert api.load_serving_model(CFG, {"MODEL_SOURCE": "wandb", "WANDB_MODEL_ALIAS": "prod"}) == (None, "rule")
+
+
+# ---------- monitoring ----------
+
+@pytest.fixture
+def monitored(monkeypatch, start_app):
+    """Start the app with a fake serve run, batch size 3, and a recorder in place of log_prediction_batch."""
+    sent = []
+    monkeypatch.setitem(CFG["api"], "monitoring_batch_size", 3)
+    monkeypatch.setattr(api.tracking, "start_run", lambda cfg, env, job_type: MagicMock(name=job_type))
+    monkeypatch.setattr(api.tracking, "finish_run", lambda run, failed=False: None)
+    monkeypatch.setattr(api.tracking, "log_prediction_batch", lambda run, rows: sent.append(list(rows)))
+    return start_app(None), sent
+
+
+def test_unit_batch_is_sent_when_full_and_cleared(monitored):
+    client, sent = monitored
+    with client:
+        for _ in range(3):
+            assert client.post("/predict", json=request_body()).status_code == 200
+        assert len(sent) == 1 and len(sent[0]) == 3
+        assert client.app.state.monitor.rows == []
+    row = sent[0][0]
+    assert set(row) == {"as_of", "recommendation", "probability", "fallback", "model_version", "latency_ms"}
+    assert row["model_version"] == "rule" and row["fallback"] is True
+
+
+def test_unit_no_send_before_the_batch_is_full(monitored):
+    client, sent = monitored
+    with client:
+        for _ in range(2):
+            client.post("/predict", json=request_body())
+        assert sent == []
+        assert len(client.app.state.monitor.rows) == 2
+
+
+def test_unit_shutdown_sends_the_last_partial_batch(monitored):
+    client, sent = monitored
+    with client:
+        client.post("/predict", json=request_body())
+    assert len(sent) == 1 and len(sent[0]) == 1
+
+
+def test_unit_tracking_error_never_reaches_the_client(monitored, monkeypatch, caplog):
+    client, _ = monitored
+
+    def broken(run, rows):
+        raise RuntimeError("W&B is down")
+
+    monkeypatch.setattr(api.tracking, "log_prediction_batch", broken)
+    with caplog.at_level(logging.ERROR, logger="src.api"), client:
+        statuses = [client.post("/predict", json=request_body()).status_code for _ in range(3)]
+        assert client.app.state.monitor.rows == []
+    assert statuses == [200, 200, 200]
+    assert any("W&B is down" in record.getMessage() for record in caplog.records)
+
+
+def test_unit_tracking_disabled_calls_nothing(monkeypatch, start_app):
+    calls = []
+    monkeypatch.setattr(api.tracking, "log_prediction_batch", lambda run, rows: calls.append(rows))
+    with start_app(None) as client:
+        for _ in range(CFG["api"]["monitoring_batch_size"] + 1):
+            assert client.post("/predict", json=request_body()).status_code == 200
+        assert client.app.state.monitor.run is None
+        assert client.app.state.monitor.rows == []
+    assert calls == []
+
+
+def test_unit_wandb_outage_at_start_up_still_serves(monkeypatch, start_app, caplog):
+    def unreachable(cfg, env, job_type):
+        raise OSError("network is unreachable")
+
+    monkeypatch.setattr(api.tracking, "start_run", unreachable)
+    with caplog.at_level(logging.ERROR, logger="src.api"), start_app(None) as client:
+        assert client.get("/health").status_code == 200
+        assert client.app.state.monitor.run is None
+    assert any("Monitoring off" in record.getMessage() for record in caplog.records)
+
+
+def test_unit_failing_finish_run_is_logged(monitored, monkeypatch, caplog):
+    client, _ = monitored
+
+    def broken(run, failed=False):
+        raise RuntimeError("cannot close")
+
+    monkeypatch.setattr(api.tracking, "finish_run", broken)
+    with caplog.at_level(logging.ERROR, logger="src.api"), client:
+        pass
+    assert any("cannot close" in record.getMessage() for record in caplog.records)

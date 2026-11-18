@@ -1,0 +1,155 @@
+# deploy.yml  [Continuous delivery: a GitHub Release goes live on the self-hosted service]
+# -------------------------------------------------------------------
+# Purpose   Build the release image once, publish it to GHCR, and prove the live service runs it
+# Trigger   A GitHub Release (or pre-release) is published: CI, build, push, smoke test
+#           A manual run from a release tag: rollback, re-points :release to that tag's existing image (no rebuild)
+# Flow      check the ref -> CI on that commit (ci.yml) -> build with the commit and version baked in
+#           -> push ghcr.io/<org>/<repo>:<sha>, :<tag> and :release -> the host (pull model) picks up :release
+#           -> smoke test the live URL until /health reports that commit
+# Variables SERVICE_URL (repository variable): the public address of the service. No secrets: GITHUB_TOKEN pushes
+# Runbook   docs/DEPLOY.md (set-up, dry run, release, rollback)
+#
+# Why the commit: the host keeps the old container serving until the new one is healthy (canary on a side port),
+# so the smoke test must know it is talking to the new image. The image carries its commit (RENDER_GIT_COMMIT,
+# the name the API already reads) and its version (APP_VERSION), and /health returns both.
+
+name: deploy
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a second one waits instead of cancelling a deploy halfway.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  check-ref:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+      mode: ${{ steps.name.outputs.mode }}
+    steps:
+      - name: Only a release tag can be deployed; a manual run is a rollback
+        id: name
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *) echo "::error::$GITHUB_REF is not a release tag (v...). Publish a release, or for a rollback pick a tag under 'Use workflow from'."
+               exit 1 ;;
+          esac
+          mode=release
+          [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && mode=rollback
+          image="$REGISTRY/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "$mode of $GITHUB_REF_NAME (commit $GITHUB_SHA) to $image"
+
+  ci:
+    needs: check-ref
+    if: needs.check-ref.outputs.mode == 'release'
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: [check-ref, ci]
+    if: needs.check-ref.outputs.mode == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ${{ needs.check-ref.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR with the workflow's own token
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login "$REGISTRY" -u "$ACTOR" --password-stdin
+
+      - name: Build once, with the commit and version baked in
+        run: |
+          docker build --build-arg GIT_COMMIT="$GITHUB_SHA" --build-arg APP_VERSION="$GITHUB_REF_NAME" \
+            -t "$IMAGE:$GITHUB_SHA" .
+
+      - name: Push the commit tag and the release tag, then move :release (the host follows it)
+        run: |
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:$GITHUB_REF_NAME"
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:release"
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:$GITHUB_REF_NAME"
+          docker push "$IMAGE:release"
+
+  rollback:
+    needs: check-ref
+    if: needs.check-ref.outputs.mode == 'rollback'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ${{ needs.check-ref.outputs.image }}
+    steps:
+      - name: Log in to GHCR with the workflow's own token
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login "$REGISTRY" -u "$ACTOR" --password-stdin
+
+      - name: Point :release at this tag's existing image (the exact image that was released, no rebuild)
+        run: |
+          if ! docker buildx imagetools inspect "$IMAGE:$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "::error::No image $IMAGE:$GITHUB_REF_NAME in GHCR. Only releases published with this workflow can be rolled back to."
+            exit 1
+          fi
+          docker buildx imagetools create -t "$IMAGE:release" "$IMAGE:$GITHUB_REF_NAME"
+
+  smoke-test:
+    needs: [check-ref, publish, rollback]
+    if: always() && (needs.publish.result == 'success' || needs.rollback.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Smoke test the live service until it runs this commit
+        env:
+          SERVICE_URL: ${{ vars.SERVICE_URL }}
+        run: |
+          if [ -z "$SERVICE_URL" ]; then
+            echo "::error::Repository variable SERVICE_URL is not set (docs/DEPLOY.md)."
+            exit 1
+          fi
+          # Standard library only. The host polls every minute and canary-tests first, so allow 15 minutes.
+          python3 scripts/smoke_test.py --url "$SERVICE_URL" --expect-commit "$GITHUB_SHA" \
+            --expect-version "$GITHUB_REF_NAME" --timeout 900
+
+      - name: Summary
+        if: always()
+        env:
+          SERVICE_URL: ${{ vars.SERVICE_URL }}
+          OUTCOME: ${{ job.status }}
+          IMAGE: ${{ needs.check-ref.outputs.image }}
+          MODE: ${{ needs.check-ref.outputs.mode }}
+        run: |
+          {
+            echo "### Deploy $GITHUB_REF_NAME ($MODE): $OUTCOME"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Commit | \`$GITHUB_SHA\` |"
+            echo "| Image | \`$IMAGE:$GITHUB_REF_NAME\` (also \`:release\`) |"
+            echo "| Health | $SERVICE_URL/health |"
+            echo "| Docs | $SERVICE_URL/docs |"
+          } >> "$GITHUB_STEP_SUMMARY"

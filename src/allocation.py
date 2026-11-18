@@ -7,7 +7,7 @@ Input     The choice names (target_weights.method, rebalancing.method), the conf
           the target weights, the decision dates and close prices; for explain, one state row and its action
 Output    resolve_target: weights per ticker; resolve_policy: policy(state_row) -> action in [0, 1];
           explain: one sentence
-Called by main.py and api.py          Calls   config.ALLOWED_VALUES, rules.make_rule_policy
+Called by main.py and api.py          Calls   config.ALLOWED_VALUES, rules.make_rule_policy, benchmarks.fit_weights
 
 Why it matters
 - The tool only decides how to return to the targets; it never moves away from them on a market view, so this is
@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 from sklearn.pipeline import Pipeline
 
-from src import config, features, rules
+from src import benchmarks, config, features, rules
 
 logger = logging.getLogger(__name__)
 
@@ -59,22 +59,28 @@ def resolve_target(method: str, cfg: dict, train_returns: pd.DataFrame | None) -
     """The target weights the portfolio is rebalanced towards, in config ticker order.
 
     Inputs:  method, target_weights.method ("policy" or a calculated method); cfg, the full config (reads
-             data.tickers and target_weights.policy); train_returns, daily returns of the train years (only for
-             the calculated methods; None is fine for "policy").
+             data.tickers and target_weights.policy; the calculated methods also read benchmarks);
+             train_returns, daily returns of the train years (only for the calculated methods; None is fine
+             for "policy").
     Outputs: weights per ticker, long only, summing to 1 (config.load_config checks the policy mix).
-    Why:     "policy" is the mix the Investment Committee approved, and the default.
-    Raises:  ValueError for an unknown method, or a calculated method without train_returns;
-             NotImplementedError for a calculated method until benchmarks.fit_weights is on dev (issue #63).
+    Why:     "policy" is the mix the Investment Committee approved, and the default. The calculated methods
+             call benchmarks.fit_weights with the benchmarks settings, so they match the benchmark report.
+    Raises:  ValueError for an unknown method, a calculated method without train_returns or with a ticker
+             missing from them, plus the errors of benchmarks.fit_weights.
     """
     _check_choice(TARGET_KEY, method)
+    tickers = cfg["data"]["tickers"]
     if method != "policy":
         if train_returns is None:
             raise ValueError(f"target_weights.method {method!r} fits the weights on the train years: pass "
                              "train_returns (daily returns of the train years).")
-        raise NotImplementedError(f"target_weights.method {method!r} calculates the weights with "
-                                  "benchmarks.fit_weights (issue #63), which is not in this version yet. "
-                                  "Use 'policy' for now.")
-    tickers = cfg["data"]["tickers"]
+        missing = [ticker for ticker in tickers if ticker not in train_returns.columns]
+        if missing:
+            raise ValueError(f"train_returns has no column for {missing}. Pass the daily returns of every ticker.")
+        target = benchmarks.fit_weights(train_returns[tickers], method, cfg["benchmarks"])
+        logger.info("Target weights: %s fitted on %d train days (%d tickers)", method, len(train_returns),
+                    len(target))
+        return target
     target = pd.Series(cfg["target_weights"]["policy"], dtype=float).reindex(tickers)
     logger.info("Target weights: %s (%d tickers)", method, len(target))
     return target

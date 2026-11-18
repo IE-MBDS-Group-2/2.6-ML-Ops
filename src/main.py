@@ -9,7 +9,8 @@ Never     Config parsing (config.py), logging set-up details (logger.py), or any
 Flow
     config.yaml + .env -> tracking (start run) -> load_data -> clean_data -> validate -> to_wide -> features
       -> portfolio (decision table) -> _split_by_date (train / validation / test sealed)
-      -> train -> evaluate: quality gate, guards and rule challengers (validation)
+      -> train (model.type: the classifier, or the reinforcement learning agent: 5 seeds, the median one)
+      -> evaluate: quality gate, guards and rule challengers (validation)
            gate met:     test audit once -> save model -> register it (tracking)
            gate not met: nothing saved or registered; today's rule serves (decision D8)
       -> infer -> reports/ -> tracking (finish run)
@@ -31,9 +32,11 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
-from src import clean_data, config, evaluate, features, infer, load_data
+from src import (benchmarks, clean_data, config, evaluate, features, infer,
+                 load_data)
 from src import logger as log_setup
-from src import portfolio, rules, tracking, train, utils, validate
+from src import (portfolio, rl_agent, robustness, rules, selection, tracking,
+                 trades, train, utils, validate)
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +145,17 @@ def _target_weights(cfg: dict) -> pd.Series:
     return pd.Series(cfg["target_weights"]["policy"], dtype=float)
 
 
+def _feature_columns(table: pd.DataFrame, cfg: dict) -> list[str]:
+    """The model inputs: every decision-table column except today's rule and the label.
+
+    Inputs:  table, the decision table; cfg, the full config (reads problem.target_column).
+    Outputs: the feature column names, in table order.
+    Why:     the classifier and the RL agent must see exactly the same inputs, so both get them from here.
+    """
+    return [name for name in table.columns
+            if name not in (portfolio.RULE_ACTION_COLUMN, cfg["problem"]["target_column"])]
+
+
 def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
     """Split by date, fit on the train years only, and score on validation.
 
@@ -153,7 +167,7 @@ def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
     labelled = table.dropna(subset=[target_column])
     train_rows, val_rows, _sealed_test = _split_by_date(
         labelled, cfg["split"]["train_end"], cfg["split"]["val_end"])
-    columns = [name for name in table.columns if name not in (portfolio.RULE_ACTION_COLUMN, target_column)]
+    columns = _feature_columns(table, cfg)
     model = train.train_model(
         train_rows[columns], train_rows[target_column],
         features.get_feature_preprocessor(columns), cfg["problem"]["problem_type"],
@@ -170,6 +184,71 @@ def _model_policy(model: Pipeline, columns: list[str]) -> Callable[[pd.Series], 
         """The model's action for one decision date."""
         return float(model.predict(state_row[columns].to_frame().T.astype(float))[0])
     return policy
+
+
+def _validation_drawdown_reduction(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict) -> float:
+    """The gate metric of one model on validation: how much smaller its worst loss is than today's rule's.
+
+    Inputs:  model and its feature columns; market_data; cfg, the full config.
+    Outputs: max_drawdown_reduction (0.20 means the worst loss is 20% smaller than today's rule's).
+    Why:     the seeds of the reinforcement learning agent are ranked by the same number the gate uses.
+    """
+    agent_daily, baseline_daily = _validation_paths(model, columns, market_data, cfg)
+    drawdowns = [evaluate.portfolio_metrics(daily["value"], daily["cost_paid"])["max_drawdown"]
+                 for daily in (agent_daily, baseline_daily)]
+    return evaluate.max_drawdown_reduction(*drawdowns)
+
+
+def _train_rl_agent(table: pd.DataFrame, market_data: tuple, cfg: dict) -> tuple:
+    """Fit the reinforcement learning agent once per seed and keep the median one.
+
+    Inputs:  table, the decision table (for the feature columns and the validation states); market_data;
+             cfg, the full config (reads rl, portfolio, split and fallback).
+    Outputs: (agent, report). agent is the QAgent of the median seed. report holds the validation
+             max_drawdown_reduction of every seed, the median seed, and fallback_share: how often the
+             service would set that agent aside for today's rule on the validation states.
+    Why:     with about 640 weekly decisions one lucky seed proves nothing (README: the median of 5).
+             Experience is collected on the train years only; validation is used to rank the seeds and for
+             the gate, never to choose settings.
+    """
+    columns, settings = _feature_columns(table, cfg), cfg["rl"]
+    transitions = rl_agent.collect_transitions(
+        market_data, _target_weights(cfg), cfg, cfg["portfolio"]["first_decision_date"],
+        cfg["split"]["train_end"], settings["n_episodes"], settings["seeds"][0])
+    agents, scores = {}, {}
+    for seed in settings["seeds"]:
+        agents[seed] = rl_agent.fit_q_agent(transitions, columns, cfg["portfolio"]["actions"], settings, seed)
+        scores[seed] = _validation_drawdown_reduction(agents[seed], columns, market_data, cfg)
+    median = rl_agent.median_seed(scores)
+    share = rl_agent.fallback_share(agents[median], table.loc[slice(*_period(cfg, "validation")), columns],
+                                    cfg["fallback"]["min_probability"])
+    logger.info("RL agent: %d seeds, %s per seed %s, median seed %d; the fallback would replace it on %.0f%% "
+                "of validation decisions", len(scores), cfg["quality_gate"]["metric_key"],
+                {seed: round(score, 4) for seed, score in scores.items()}, median, 100 * share)
+    report = {"seed_scores": {str(seed): score for seed, score in scores.items()}, "median_seed": median,
+              "median_score": scores[median], "fallback_share": share}
+    return agents[median], report
+
+
+def _candidate(table: pd.DataFrame, market_data: tuple, cfg: dict) -> tuple:
+    """Train the model that goes to the quality gate, as chosen by model.type.
+
+    Inputs:  table, the decision table with best_action; market_data; cfg, the full config
+             (reads model.type and rl.enabled).
+    Outputs: (model, feature_columns, scores). scores always names the model_type. With "classifier" it
+             holds the classifier's validation scores; with "fitted_q" it holds the agent's report under "rl".
+             With "classifier" and rl.enabled the agent is trained too and reported under "rl", but the
+             classifier stays the candidate.
+    Why:     both kinds of model offer predict and predict_proba, so every later step treats them the same.
+    """
+    kind, columns = cfg["model"]["type"], _feature_columns(table, cfg)
+    model, scores = None, {}
+    if kind == "classifier":
+        model, columns, _val_rows, scores = _train_and_score(table, cfg)
+    if kind == "fitted_q" or cfg["rl"]["enabled"]:
+        agent, scores["rl"] = _train_rl_agent(table, market_data, cfg)
+        model = agent if kind == "fitted_q" else model
+    return model, columns, {**scores, "model_type": kind}
 
 
 def _period(cfg: dict, split: str) -> tuple[str, str]:
@@ -199,7 +278,7 @@ def _validation_paths(model: Pipeline, columns: list[str], market_data: tuple, c
     target = _target_weights(cfg)
     start, end = _period(cfg, split)
     start = str(close_wide.index[close_wide.index >= pd.Timestamp(start)][0].date())
-    rule = portfolio.make_current_rule_policy(target, rules.review_dates(close_wide, start, end), cfg)
+    rule = portfolio.make_current_rule_policy(target, rules.review_dates(close_wide, start, end, cfg), cfg)
     agent_daily, _ = portfolio.simulate(
         *market_data, target, _model_policy(model, columns), start, end, cfg)
     baseline_daily, _ = portfolio.simulate(*market_data, target, rule, start, end, cfg)
@@ -227,24 +306,25 @@ def _portfolio_report(daily: pd.DataFrame, market_data: tuple, cfg: dict) -> dic
     """Risk, return and cost of one simulated run, plus its tracking error to the target weights.
 
     Inputs:  daily, a daily frame from portfolio.simulate; market_data; cfg (reads target_weights).
-    Outputs: evaluate.portfolio_metrics plus "tracking_error" (weekly values on the review dates).
+    Outputs: evaluate.portfolio_metrics plus "tracking_error" (values on the review dates).
     Why:     the guards need the same numbers for the model and for today's rule.
     """
     close_wide = market_data[0]
-    reviews = rules.review_dates(close_wide, str(daily.index[0].date()), str(daily.index[-1].date()))
+    reviews = rules.review_dates(close_wide, str(daily.index[0].date()), str(daily.index[-1].date()), cfg)
     report = evaluate.portfolio_metrics(daily["value"], daily["cost_paid"])
     report["tracking_error"] = evaluate.tracking_error(
         daily["value"].reindex(reviews), rules.target_path(close_wide, _target_weights(cfg), reviews),
-        rules.WEEKS_PER_YEAR)
+        portfolio.periods_per_year(portfolio.review_frequency(cfg)))
     return report
 
 
-def _period_metrics(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, split: str) -> tuple:
+def _period_metrics(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, split: str,
+                    challenger_values: dict[str, pd.Series] | None = None) -> tuple:
     """The model against today's rule and the simple-rule challengers over one period.
 
     Inputs:  model and its feature columns; market_data; cfg, the full config; split, "validation" or "test".
-    Outputs: (metrics, challengers): metrics holds agent, baseline, the gate metric and whether it is met,
-             and the guards; challengers is the rules.run_challengers table for the same dates.
+    Outputs: metrics, challenger table and the daily agent and baseline paths.
+             When requested, challenger_values receives the daily challenger values.
     Why:     validation and the one-time test audit are measured by exactly the same code.
     """
     agent_daily, baseline_daily = _validation_paths(model, columns, market_data, cfg, split)
@@ -258,25 +338,26 @@ def _period_metrics(model: Pipeline, columns: list[str], market_data: tuple, cfg
     }
     challengers = rules.run_challengers(
         market_data, _target_weights(cfg), cfg, str(agent_daily.index[0].date()),
-        str(agent_daily.index[-1].date()), agent_daily)
-    return metrics, challengers
+        str(agent_daily.index[-1].date()), agent_daily, challenger_values)
+    return metrics, challengers, (agent_daily, baseline_daily)
 
 
-def _test_audit(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, chosen: str) -> dict:
+def _test_audit(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, chosen: str) -> tuple[dict, dict]:
     """The one-time look at the test years, only for a model that passed the gate on validation.
 
     Inputs:  model and its feature columns; market_data; cfg; chosen, the simple rule selected on validation.
-    Outputs: the test metrics plus "release": the go / no-go and every reason against (README).
+    Outputs: test metrics and release decision, plus the separate robustness diagnostics.
     Why:     the test years stay sealed until a model has earned the look; the decision is made once.
     """
-    metrics, challengers = _period_metrics(model, columns, market_data, cfg, "test")
+    challenger_values = {}
+    metrics, challengers, paths = _period_metrics(model, columns, market_data, cfg, "test", challenger_values)
     agent_drawdown = metrics["agent"]["max_drawdown"]
     rule_drawdown = float(challengers.loc[chosen, "max_drawdown"])
     metrics["guards"]["challenger"] = {"value": agent_drawdown, "limit": rule_drawdown,
                                        "passed": bool(agent_drawdown > rule_drawdown)}
     metrics["release"] = evaluate.release_decision(metrics["gate"]["met"], metrics["guards"])
     logger.info("Test audit done: %s", "release" if metrics["release"]["release"] else "do not release")
-    return metrics
+    return metrics, robustness.test_period_diagnostics(*paths, challenger_values, cfg)
 
 
 def _numbers(metrics: dict, prefix: str = "") -> dict[str, float]:
@@ -343,20 +424,21 @@ def _keep_or_drop_model(model: Pipeline, metrics: dict, paths: dict, cfg: dict, 
     utils.save_model(model, paths["model"])
     key = cfg["quality_gate"]["metric_key"]
     tracking.log_model(tracker, paths["model"], cfg["tracking"]["model_artifact"],
-                       {key: metrics[key], "gate": metrics["gate"], "challenger": metrics["challenger"]["name"]})
+                       {key: metrics[key], "gate": metrics["gate"], "challenger": metrics["challenger"]["name"],
+                        "model_type": metrics["model_type"]})
     return model
 
 
 def _validation_report(fitted: tuple, market_data: tuple, cfg: dict, paths: dict, tracker: object) -> tuple:
     """Everything measured on validation: the gate, the guards and the selected simple-rule challenger.
 
-    Inputs:  fitted, (model, feature columns, validation scores) from _train_and_score; market_data; cfg;
+    Inputs:  fitted, (model, feature columns, validation scores) from _candidate; market_data; cfg;
              paths; tracker, the tracking run or None.
     Outputs: (metrics, chosen): the metrics dictionary and the name of the selected rule. Also writes the
              challengers table and sends the numbers to the tracker.
     """
     model, columns, scores = fitted
-    metrics, challengers = _period_metrics(model, columns, market_data, cfg, "validation")
+    metrics, challengers, _daily_paths = _period_metrics(model, columns, market_data, cfg, "validation")
     metrics.update(scores)
     chosen = rules.select_challenger(challengers, challengers.attrs["guards"])
     metrics["challenger"] = {"name": chosen, "max_drawdown": float(challengers.loc[chosen, "max_drawdown"])}
@@ -370,13 +452,150 @@ def _write_recommendations(approved: Pipeline | None, columns: list[str], cfg: d
     """Recommend on the latest inference data, save the file and send the table to the tracker if asked.
 
     Inputs:  approved, the model that passed the gate or None; its feature columns; cfg; paths; tracker.
-    Outputs: the number of recommendations written.
+    Outputs: the number of recommendations written. Also writes the proposed portfolio and the trades when a
+             positions file exists (_write_trades).
+    Why:     the batch run gives the same three answers as the API: recommendation, proposed portfolio, trades.
     """
     recommendations = _recommendations(approved, columns, cfg)
     utils.save_csv(recommendations.reset_index(), paths["predictions"])
+    _write_trades(approved, columns, cfg, paths)
     if cfg["tracking"]["log_predictions_table"]:
         tracking.log_table(tracker, "predictions", recommendations.reset_index())
+    logger.info("Pipeline finished: %d recommendations written to %s", len(recommendations), paths["predictions"])
     return len(recommendations)
+
+
+def _write_robustness(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, path: Path,
+                      tracker: object, test_diagnostics: dict, versions_tried: int) -> None:
+    """Write historical and validation diagnostics and attach the test audit when available.
+
+    Inputs: Fitted model and columns, market frames, config, report path, tracker, audit results and trial count.
+    Outputs: Robustness JSON and tracking table.
+    Why: Record diagnostics without using them to change the validation gate or release decision.
+    """
+    validation_end = cfg["split"]["val_end"]
+    history = tuple(frame.loc[:validation_end] for frame in market_data)
+    ceiling = robustness.feasibility_ceiling(
+        history, _target_weights(cfg), cfg, cfg["portfolio"]["first_decision_date"], validation_end)
+
+    def run_policy(settings: dict) -> pd.DataFrame:
+        """Return aligned validation values for the selected trading cost settings."""
+        agent, baseline = _validation_paths(model, columns, history, settings)
+        return pd.DataFrame({"agent_value": agent["value"], "baseline_value": baseline["value"]})
+
+    sensitivity = robustness.cost_sensitivity(run_policy, cfg).astype(object)
+    results = {
+        "feasibility_ceiling": ceiling,
+        "validation_cost_sensitivity": sensitivity.where(sensitivity.notna(), None).to_dict(orient="records"),
+        "test": test_diagnostics,
+    }
+    robustness.report_robustness(results, versions_tried, path, tracker)
+
+
+def _select_model_params(table: pd.DataFrame, market_data: tuple, cfg: dict,
+                         paths: dict, tracker: object) -> tuple[dict, int]:
+    """Select parameters using training years when selection is enabled.
+
+    Inputs: Decision table, market frames, configuration, the resolved paths (selection and
+        frequency_comparison are written) and tracker.
+    Outputs: Configuration for the final fit and the number of distinct candidates evaluated; also writes the
+        trial table and the daily, weekly and monthly comparison.
+    Why: Keep holdout years out of parameter selection and preserve the original configuration.
+    """
+    if not cfg["selection"]["enabled"]:
+        return cfg, 1
+    cutoff = cfg["split"]["train_end"]
+    training_market = tuple(frame.loc[:cutoff] for frame in market_data)
+    best, trials = selection.grid_search(table.loc[:cutoff], training_market, cfg, tracker)
+    utils.save_csv(trials, paths["selection"])
+    comparison = selection.frequency_comparison(market_data, cfg, best)
+    utils.save_csv(comparison, paths["frequency_comparison"])
+    tracking.log_table(tracker, "frequency_comparison", comparison)
+    return {**cfg, "model": {**cfg["model"], "params": best}}, len(trials)
+
+
+def _first_trading_day(close_wide: pd.DataFrame, start: str) -> str:
+    """The first trading day on or after a date.
+
+    Inputs:  close_wide, prices indexed by trading day; start, YYYY-MM-DD.
+    Outputs: that trading day as YYYY-MM-DD.
+    Why:     a period can start on a weekend or holiday, and the simulator starts on a trading day.
+    """
+    return str(close_wide.index[close_wide.index >= pd.Timestamp(start)][0].date())
+
+
+def _write_benchmarks(market_data: tuple, cfg: dict, paths: dict, metrics: dict, tracker: object) -> None:
+    """Report the four traditional portfolios over the validation years, next to the model and today's rule.
+
+    Inputs:  market_data; cfg (reads benchmarks and split); paths (benchmarks); metrics, which gains a
+             "benchmarks" entry; tracker, the run or None.
+    Outputs: None. Writes paths.benchmarks and logs the table, when benchmarks.enabled is true.
+    Why:     the business case reports these portfolios on the same dates as the gate; they are never gated.
+    """
+    start, end = _period(cfg, "validation")
+    benchmarks.report_benchmarks(market_data, cfg, _first_trading_day(market_data[0], start), end,
+                                 paths["benchmarks"], metrics, tracker)
+
+
+def _positions_action(approved: Pipeline | None, columns: list[str], weights: pd.Series, cfg: dict) -> float:
+    """The recommendation for the positions' own weights on the latest inference day.
+
+    Inputs:  approved, the model that passed the gate or None; columns, its feature columns; weights, the
+             current weights of the positions file; cfg, the full config.
+    Outputs: 0.0, 0.5 or 1.0: the model's action with the 60% fallback to today's rule, or today's rule when no
+             model passed the gate (D8).
+    Why:     the same state the API builds (portfolio.live_state), so the batch answer for a book and the live
+             answer for the same book agree. The positions file has no drawdown or weeks since the last
+             rebalance, so both start at 0.
+    """
+    close_wide, volume_wide, market = _market_inputs(
+        _load_prices(PROJECT_ROOT / cfg["paths"]["inference_data"], cfg), cfg)
+    state = portfolio.live_state(close_wide, volume_wide, market, weights, 0.0, 0,
+                                 _target_weights(cfg).reindex(weights.index), cfg)
+    rule = state[portfolio.RULE_ACTION_COLUMN]
+    if approved is None:
+        return float(rule.iloc[0])
+    inputs = state[columns]
+    answer = infer.apply_fallback(infer.run_inference(approved, inputs, include_proba=True), rule,
+                                  inputs.isna().any(axis=1), cfg["fallback"]["min_probability"])
+    return float(answer["recommendation"].iloc[0])
+
+
+def _write_trades(approved: Pipeline | None, columns: list[str], cfg: dict, paths: dict) -> bool:
+    """Recommend for the book in the positions file and write its proposed portfolio and trade list.
+
+    Inputs:  approved, the model that passed the gate or None; columns, its feature columns; cfg (reads
+             data.tickers, positions, target_weights and portfolio.min_trade); paths (positions,
+             proposed_portfolio, trades).
+    Outputs: True when the positions file exists and both reports were written, False when there is no file.
+    Why:     the desk acts on orders, not on a 0 / 0.5 / 1.0 code; the batch run gives what the API gives.
+    Raises:  ValueError from trades.positions_to_weights (unknown ticker, negative or missing value, total 0)
+             and from portfolio.live_state.
+    """
+    if not paths["positions"].exists():
+        logger.info("No positions file at %s: no proposed portfolio or trades written", paths["positions"])
+        return False
+    names = cfg["positions"]
+    weights, total = trades.positions_to_weights(utils.load_csv(paths["positions"]), cfg["data"]["tickers"],
+                                                 names["ticker_column"], names["value_column"])
+    action = _positions_action(approved, columns, weights, cfg)
+    proposed = trades.proposed_portfolio(weights, _target_weights(cfg).reindex(weights.index), action, total)
+    utils.save_csv(proposed, paths["proposed_portfolio"])
+    utils.save_csv(trades.trade_list(weights, proposed, total, cfg["portfolio"]["min_trade"]), paths["trades"])
+    logger.info("Positions in %s: action %.1f, proposed portfolio and trades written", paths["positions"], action)
+    return True
+
+
+def _versions_tried(cfg: dict, grid_trials: int, scores: dict) -> int:
+    """How many model versions were looked at on validation, for the multiple-testing correction.
+
+    Inputs:  cfg (reads model.type and rl.seeds); grid_trials, from _select_model_params (1 when off);
+             scores, from _candidate ("rl" is there when the agent was trained).
+    Outputs: grid trials for the classifier when it ran, plus one per RL seed when the agent ran.
+    Why:     every version scored on validation counts, or the robustness report overstates the evidence.
+    """
+    tried = grid_trials if cfg["model"]["type"] == "classifier" else 0
+    return tried + (len(cfg["rl"]["seeds"]) if "rl" in scores else 0)
 
 
 def run(cfg: dict, tracker: object = None) -> dict:
@@ -385,7 +604,7 @@ def run(cfg: dict, tracker: object = None) -> dict:
     Inputs:  cfg, the full config dictionary (see config.load_config); tracker, the run from
              tracking.start_run, or None when tracking is off (every tracking call then does nothing).
     Outputs: the metrics dictionary, also written to paths.metrics. Also writes the clean data, the
-             challengers table and the predictions, and the model only if it passed the gate.
+             challengers table, robustness report and predictions, and the model only if it passed the gate.
     Why:     one function that calls every module in order; no cleaning or model logic of its own.
     Raises:  FileNotFoundError, OSError, KeyError, ValueError from the steps it calls.
     """
@@ -399,19 +618,25 @@ def run(cfg: dict, tracker: object = None) -> dict:
     table = portfolio.build_decision_table(
         *market_data, _target_weights(cfg),
         cfg["portfolio"]["first_decision_date"], cfg["data"]["end"], cfg)
-    # 3. Split by date, fit on the train years, score on validation.
-    model, columns, _val_rows, scores = _train_and_score(table, cfg)
+    # 3. Select the settings on the train years (when enabled), fit the candidate (model.type) on them,
+    #    and score it on validation.
+    cfg, versions_tried = _select_model_params(table, market_data, cfg, paths, tracker)
+    model, columns, scores = _candidate(table, market_data, cfg)
     # 4. On validation: the quality gate, the guards and the simple-rule challengers.
     metrics, chosen = _validation_report((model, columns, scores), market_data, cfg, paths, tracker)
     # 5. Only a model that passed the gate gets the one-time test audit, and is saved and registered.
+    test_diagnostics = {"status": "sealed", "reason": "validation_gate_not_met"}
     if metrics["gate"]["met"]:
-        metrics["test"] = _test_audit(model, columns, market_data, cfg, chosen)
+        metrics["test"], test_diagnostics = _test_audit(model, columns, market_data, cfg, chosen)
         tracking.log_metrics(tracker, _numbers(metrics["test"]), prefix="test/")
+    _write_robustness(model, columns, market_data, cfg, paths["robustness"], tracker, test_diagnostics,
+                      _versions_tried(cfg, versions_tried, scores))
     approved = _keep_or_drop_model(model, metrics, paths, cfg, tracker)
+    # Reported, never gated: the traditional portfolios on the validation years.
+    _write_benchmarks(market_data, cfg, paths, metrics, tracker)
     utils.save_json(metrics, paths["metrics"])
     # 6. Recommend on the latest inference data: the approved model, or today's rule if there is none.
-    written = _write_recommendations(approved, columns, cfg, paths, tracker)
-    logger.info("Pipeline finished: %d recommendations written to %s", written, paths["predictions"])
+    _write_recommendations(approved, columns, cfg, paths, tracker)
     return metrics
 
 

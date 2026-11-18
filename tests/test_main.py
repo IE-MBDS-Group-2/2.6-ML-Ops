@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from src import config, evaluate, main, tracking, utils
+from src import config, evaluate, main, rl_agent, tracking, utils
 
 TICKERS = ["SPY", "EFA", "IEF", "GLD", "BIL"]
 
@@ -153,7 +153,7 @@ def test_integration_pipeline_writes_every_output(tmp_path, monkeypatch):
     cfg = _pipeline_setup(tmp_path, monkeypatch)
     _force_gate(monkeypatch, True)
     main.main()
-    for name in ("processed_data", "model", "predictions", "metrics", "challengers"):
+    for name in ("processed_data", "model", "predictions", "metrics", "challengers", "robustness", "benchmarks"):
         assert (tmp_path / cfg["paths"][name]).exists()
     model = utils.load_model(tmp_path / cfg["paths"]["model"])
     metrics = json.loads((tmp_path / cfg["paths"]["metrics"]).read_text(encoding="utf-8"))
@@ -172,6 +172,62 @@ def test_integration_pipeline_writes_every_output(tmp_path, monkeypatch):
     challengers = pd.read_csv(tmp_path / cfg["paths"]["challengers"])
     assert "current" in set(challengers["rule"])
     assert metrics["challenger"]["name"] in set(challengers["rule"])
+    robustness = json.loads((tmp_path / cfg["paths"]["robustness"]).read_text(encoding="utf-8"))
+    assert robustness["versions_tried"] == 1
+    significance = robustness["test"]["challenger_significance"]
+    assert significance["status"] == "measured"
+    assert set(significance["p_values"]) == set(significance["holm_adjusted"]) == set(challengers["rule"])
+
+
+def _small_rl(cfg: dict, model_type: str, enabled: bool = False) -> dict:
+    """Point the config at the reinforcement learning agent with settings small enough for a test."""
+    cfg["model"]["type"] = model_type
+    cfg["rl"].update(enabled=enabled, n_episodes=2, n_iterations=2, seeds=[0, 1, 2])
+    cfg["rl"]["estimator"]["max_iter"] = 10
+    return cfg
+
+
+def test_integration_pipeline_runs_the_rl_agent_when_model_type_is_fitted_q(tmp_path, monkeypatch):
+    """model.type fitted_q: one agent per seed, the median one goes through the gate, the audit and inference."""
+    cfg = _small_rl(_pipeline_setup(tmp_path, monkeypatch), "fitted_q")
+    _force_gate(monkeypatch, True)
+    registered = _record(monkeypatch, "log_model")
+    logged = _record(monkeypatch, "log_metrics")
+    metrics = main.run(cfg)
+    report = metrics["rl"]
+    assert metrics["model_type"] == "fitted_q" and "accuracy" not in metrics
+    assert set(report["seed_scores"]) == {"0", "1", "2"}
+    assert report["median_seed"] == rl_agent.median_seed({int(k): v for k, v in report["seed_scores"].items()})
+    assert report["median_score"] == report["seed_scores"][str(report["median_seed"])]
+    assert metrics["max_drawdown_reduction"] == pytest.approx(report["median_score"])    # the gate saw that agent
+    assert 0.0 <= report["fallback_share"] <= 1.0
+    assert "rl/fallback_share" in logged[0][0][1] and "rl/seed_scores/0" in logged[0][0][1]
+    assert registered[0][0][3]["model_type"] == "fitted_q"
+    assert isinstance(utils.load_model(tmp_path / cfg["paths"]["model"]), rl_agent.QAgent)
+    assert metrics["test"]["split"] == "test"
+    predictions = pd.read_csv(tmp_path / cfg["paths"]["predictions"])
+    assert set(predictions["recommendation"]) <= {0.0, 0.5, 1.0}
+    assert predictions["probability"].between(1 / 3, 1.0).all()
+
+
+def test_unit_rl_enabled_reports_the_agent_but_the_classifier_stays_the_candidate(tmp_path, monkeypatch):
+    cfg = _small_rl(_pipeline_setup(tmp_path, monkeypatch), "classifier", enabled=True)
+    _force_gate(monkeypatch, True)
+    metrics = main.run(cfg)
+    assert metrics["model_type"] == "classifier"
+    assert "accuracy" in metrics and set(metrics["rl"]["seed_scores"]) == {"0", "1", "2"}
+    assert not isinstance(utils.load_model(tmp_path / cfg["paths"]["model"]), rl_agent.QAgent)
+
+
+def test_unit_classifier_run_does_not_train_the_agent_unless_asked(tmp_path, monkeypatch):
+    cfg = _pipeline_setup(tmp_path, monkeypatch)
+
+    def never(*args, **kwargs):
+        raise AssertionError("the agent must not be trained when model.type is classifier and rl.enabled is false")
+
+    monkeypatch.setattr(rl_agent, "collect_transitions", never)
+    metrics = main.run(cfg)
+    assert metrics["model_type"] == "classifier" and "rl" not in metrics
 
 
 def test_unit_gate_met_saves_and_registers(tmp_path, monkeypatch):
@@ -183,7 +239,7 @@ def test_unit_gate_met_saves_and_registers(tmp_path, monkeypatch):
     tables = _record(monkeypatch, "log_table")
     cfg["tracking"]["log_predictions_table"] = False
     metrics = main.run(cfg)
-    assert tables == []                                   # the predictions table is only sent when asked for
+    assert [call[0][1] for call in tables] == ["robustness", "benchmarks"]
     assert (tmp_path / cfg["paths"]["model"]).exists()
     assert len(registered) == 1
     assert registered[0][0][2] == cfg["tracking"]["model_artifact"]
@@ -205,7 +261,10 @@ def test_unit_gate_not_met_saves_nothing(tmp_path, monkeypatch):
     main.main()                                   # exit code 0: "not met" is a result, not a crash
     assert not stale.exists()
     assert registered == []
-    assert [call[0][1] for call in tables] == ["predictions"]
+    assert [call[0][1] for call in tables] == ["robustness", "benchmarks", "predictions"]
+    robustness = json.loads((tmp_path / cfg["paths"]["robustness"]).read_text(encoding="utf-8"))
+    assert robustness["test"] == {"status": "sealed", "reason": "validation_gate_not_met"}
+    assert [row["cost_model"] for row in robustness["validation_cost_sensitivity"]] == ["flat", "realistic"]
     metrics = json.loads((tmp_path / cfg["paths"]["metrics"]).read_text(encoding="utf-8"))
     assert metrics["gate"]["met"] is False
     assert "test" not in metrics                  # the test years stay sealed
@@ -213,6 +272,37 @@ def test_unit_gate_not_met_saves_nothing(tmp_path, monkeypatch):
     assert predictions["fallback"].all()
     assert set(predictions["recommendation"]) <= {0.0, 1.0}      # today's rule only ever says 0 or 1
     assert (predictions["recommendation"] == predictions["prediction"]).all()
+
+
+def test_integration_grid_search_reports_trials(tmp_path: Path, monkeypatch) -> None:
+    """Only training rows reach the grid, and its trial count reaches the robustness report."""
+    cfg = _pipeline_setup(tmp_path, monkeypatch)
+    _force_gate(monkeypatch, False)
+    cfg["selection"].update(enabled=True, first_train_end="2020-12-31", grid={"C": [.1, 1.]})
+    logs = _record(monkeypatch, "log_metrics")
+    grid_search = main.selection.grid_search
+
+    def check_training_boundary(table: pd.DataFrame, market: tuple, settings: dict, tracker: object) -> tuple:
+        """Reject validation or test dates before evaluating the real parameter grid."""
+        cutoff = pd.Timestamp(settings["split"]["train_end"])
+        assert table.index.max() <= cutoff
+        assert all(frame.index.max() <= cutoff for frame in market)
+        return grid_search(table, market, settings, tracker)
+
+    monkeypatch.setattr(main.selection, "grid_search", check_training_boundary)
+
+    main.run(cfg)
+
+    trials = pd.read_csv(tmp_path / cfg["paths"]["selection"])
+    assert trials["C"].tolist() == [.1, 1.]
+    assert len([call for call in logs if call[1]["prefix"] == "grid/"]) == len(trials)
+    report = json.loads((tmp_path / cfg["paths"]["robustness"]).read_text(encoding="utf-8"))
+    assert report["versions_tried"] == len(trials)
+    assert report["test"]["status"] == "sealed"
+    assert cfg["model"]["params"] == config.load_config()["model"]["params"]
+    comparison = pd.read_csv(tmp_path / cfg["paths"]["frequency_comparison"])
+    assert comparison["review"].tolist() == ["daily", "weekly", "monthly"]
+    assert comparison["blocks"].gt(0).all()
 
 
 def test_unit_error_marks_the_run_failed(tmp_path, monkeypatch):
@@ -327,3 +417,42 @@ def test_integration_repo_config_has_every_section():
     """The committed config.yaml loads with every required section."""
     cfg = config.load_config(main.CONFIG_PATH)
     assert cfg["quality_gate"]["metric_key"] == "max_drawdown_reduction"
+
+
+# ---------- benchmarks, trades files and versions tried (#71) ----------
+
+def test_unit_benchmarks_are_reported_on_the_validation_years(tmp_path, monkeypatch):
+    cfg = _pipeline_setup(tmp_path, monkeypatch)
+    metrics = main.run(cfg)
+    report = pd.read_csv(tmp_path / cfg["paths"]["benchmarks"])
+    assert set(report["method"]) == set(cfg["benchmarks"]["methods"])
+    assert len(metrics["benchmarks"]) == len(cfg["benchmarks"]["methods"])
+
+
+def test_unit_trades_are_written_only_when_a_positions_file_exists(tmp_path, monkeypatch):
+    cfg = _pipeline_setup(tmp_path, monkeypatch)
+    main.run(cfg)
+    assert not (tmp_path / cfg["paths"]["trades"]).exists()        # no positions file: nothing written
+    # A drifted book: SPY 20 points above its 40% target, far outside today's 5-point band.
+    values = {"SPY": 600.0, "EFA": 100.0, "IEF": 250.0, "GLD": 25.0, "BIL": 25.0}
+    pd.DataFrame({"ticker": list(values), "market_value": list(values.values())}).to_csv(
+        tmp_path / cfg["paths"]["positions"], index=False)
+    main.run(cfg)
+    proposed = pd.read_csv(tmp_path / cfg["paths"]["proposed_portfolio"])
+    orders = pd.read_csv(tmp_path / cfg["paths"]["trades"])
+    assert list(proposed["ticker"]) == cfg["data"]["tickers"]
+    assert proposed["value"].sum() == pytest.approx(sum(values.values()))
+    # No model passed the gate here, so today's rule decides for this book: the drift breach means rebalance
+    # fully, back to the policy weights, and the buys and sells net to zero.
+    assert proposed.set_index("ticker")["weight"].to_dict() == pytest.approx(cfg["target_weights"]["policy"])
+    assert orders.set_index("ticker")["side"].to_dict() == {"SPY": "sell", "EFA": "buy", "IEF": "buy", "GLD": "buy",
+                                                            "BIL": "buy"}
+    signed = orders["value"].where(orders["side"] == "buy", -orders["value"])
+    assert signed.sum() == pytest.approx(0.0, abs=1e-6)
+
+
+def test_unit_versions_tried_counts_grid_trials_and_rl_seeds():
+    cfg = {"model": {"type": "classifier"}, "rl": {"seeds": [0, 1, 2]}}
+    assert main._versions_tried(cfg, 6, {}) == 6
+    assert main._versions_tried(cfg, 6, {"rl": {}}) == 9                  # classifier plus the reported agent
+    assert main._versions_tried({**cfg, "model": {"type": "fitted_q"}}, 6, {"rl": {}}) == 3
