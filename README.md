@@ -105,7 +105,7 @@ Scales to (ideas, not findings): the firm's conservative and growth model portfo
 9. "Wide drift band" as the cause is a hypothesis. The band research is not done.
 10. The snapshot owner is named (Ricardo Arciniegas). The personal-use claim comes from yfinance's documentation, not from Yahoo's own terms. Still open: name who read Yahoo's terms, with the date.
 11. Check the `yfinance` notes for the pinned version (the cited pages were for older versions), confirm the tickers. Confirmed: all five ETFs have Yahoo data from 2007-05-30 (BIL is the latest). Verified by the snapshot download on 11 Nov 2026: 4,679 trading days per ticker, no gaps, no missing values.
-12. The drift monitor alert limit has no number. The €0.01 cost limit is compute only. The scaling claims are ideas.
+12. Closed (#119): the drift alert fires when the population stability index (PSI) of the daily returns of SPY, EFA, IEF or GLD over the last 180 trading days, against the train years, is above 0.2 (`monitoring.psi_limit`, computed by `src/monitoring.py`; see "Monitoring"). Still open: the €0.01 cost limit is compute only, and the scaling claims are ideas.
 13. Challengers check weekly, whereas Indexa monitors daily. The project name is not chosen.
 14. The label is only ever 0.0 (about 55% of decisions) or 1.0 (about 45%), never 0.5, because the reward is nearly linear in the action. Decide whether to keep three actions.
 
@@ -180,7 +180,9 @@ The live service sends its answers to Weights & Biases so the team can see when 
 - **What is logged:** for each `/predict` answer, `as_of`, `recommendation`, `probability`, `fallback`, `model_version` and the latency in ms. The API keeps the last `api.monitoring_batch_size` answers (20) in memory and logs them as one table (`serve/predictions`) under a W&B run with job type `serve`. The last partial batch is sent when the service shuts down.
 - **What is not logged:** the request itself. Positions, prices and `portfolio_id` never leave the service, and the log has one line per request (as_of, recommendation, fallback, latency). No personal data is involved: the inputs are ETF prices and portfolio weights.
 - **Never breaks serving:** with `WANDB_MODE=disabled` or `tracking.enabled: false` nothing is kept or sent. If W&B cannot be reached, at start-up or later, the error is logged and the request still gets its answer.
-- **Retrain triggers:** the full list is in one place, "What triggers a retrain" in the model card. This monitoring measures the first two: the fallback rate (above 50% for 4 weeks in a row) and the live drawdown reduction against today's rule (below 0 over a quarter).
+- **Weekly monitoring run:** `python -m scripts.monitor_report`, once a week after Friday's close. It writes `reports/monitoring.json` and, with tracking on, logs a W&B run of job type `monitor` with two charts, each with its retrain limit drawn in: the fallback rate per week (from the `serve/predictions` tables) and the input drift per week. W&B view: [etf-rebalancing project](https://wandb.ai/ie-mbds-group-2/etf-rebalancing), runs of job type `monitor`. With W&B off, pass `--answers <csv>` (columns `as_of`, `fallback`) to measure the fallback rate from a file.
+- **Drift measure and limit:** the population stability index (PSI) of the daily returns of SPY, EFA, IEF and GLD, comparing the last 180 trading days of the inference data with the train years (2007-09-07 to 2019-12-31), in 10 bins cut at the train years' deciles. The weekly number is the largest PSI over the four tickers; the alert fires above 0.2. Why PSI and 0.2: it is the standard drift measure in credit scoring, read as below 0.1 stable, 0.1 to 0.2 watch, above 0.2 a real shift. Why daily returns: every market feature is built from them, and they are close to independent from day to day. The 4- and 12-week returns and the 20-day volatility overlap, so their PSI stays far above 0.2 even when nothing has changed (on the synthetic prices, it fired in every week tested, with a median of 3.5 over 120 days). Why 180 days: noise alone gives a PSI near (10 - 1) / 180 = 0.05; on the synthetic prices (three seeds) it never fired with no change, and it caught daily moves 1.5 times larger after 90 to 110 trading days. Why not BIL: its daily return is the T-bill rate, near 0 in most train years and about 5% since 2022, so it would keep the alert on permanently. Settings: `monitoring` in `config.yaml`. Not yet checked on the real snapshot.
+- **Retrain triggers:** the full list is in one place, "What triggers a retrain" in the model card. This monitoring measures two of them: the fallback rate (above 50% for 4 weeks in a row) and the input drift (largest daily-return PSI above 0.2 in the latest week). The live drawdown reduction against today's rule (below 0 over a quarter) needs realised portfolio values, which the API does not log; it is checked in the monthly review.
 
 ## Repo structure
 ```text
@@ -190,7 +192,7 @@ The live service sends its answers to Weights & Biases so the team can see when 
 ├── config.yaml           # every non-secret setting
 ├── environment.yml       # conda environment
 ├── docs/                 # MODULE_SPECS.md: the module contract
-├── scripts/              # fetch_prices.py: makes the price snapshot
+├── scripts/              # fetch_prices.py: makes the price snapshot; monitor_report.py: weekly drift and fallback run
 ├── src/                  # one module per job, main.py runs them all
 ├── tests/                # automated tests
 └── .github/workflows/    # ci.yml: lint-and-test

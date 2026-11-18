@@ -9,6 +9,7 @@ paths:
   model: "models/model.joblib"
   predictions: "reports/predictions.csv"
   metrics: "reports/metrics.json"
+  monitoring: "reports/monitoring.json"
   log_file: "logs/pipeline.log"
   positions: "data/inference/positions.csv"          # optional: one portfolio or sleeve (DECISION D9)
   proposed_portfolio: "reports/proposed_portfolio.csv"
@@ -124,6 +125,18 @@ tracking:                        # W&B; secrets and WANDB_MODE live in .env (DEC
 api:                             # DECISION D9
   min_history_days: 61           # 12-week return (60 trading days) plus one
   monitoring_batch_size: 20
+
+monitoring:                      # README open gap 12, model card "What triggers a retrain"; scripts/monitor_report.py
+  psi_bins: 10                   # deciles of the train years
+  psi_limit: 0.2                 # drift alert: the usual PSI reading, above 0.2 is a real shift (0.1 to 0.2: watch)
+  tickers: ["SPY", "EFA", "IEF", "GLD"]   # daily returns compared; BIL left out: its return is the T-bill rate,
+                                 # near 0 in most train years and ~5% since 2022, so it would alert for good
+  window_days: 180               # trading days each Friday looks back: noise alone gives PSI ~ 9/180 = 0.05;
+                                 # on synthetic prices, no false alarm and a 1.5x volatility shift caught in ~100 days
+  fallback_limit: 0.5            # retrain when the weekly fallback rate is above this...
+  fallback_weeks: 4              # ...in each of this many weeks in a row
+  date_column: "as_of"           # columns of the serve table the API logs (tracking.PREDICTION_TABLE)
+  fallback_column: "fallback"
 
 selection:                       # DECISION D14: train years only; validation and test stay unseen
   enabled: false
