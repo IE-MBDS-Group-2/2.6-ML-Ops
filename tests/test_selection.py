@@ -105,7 +105,9 @@ def test_unit_walk_forward_scores_one_row_per_window(monkeypatch: pytest.MonkeyP
 
     result = selection.walk_forward_scores(table, (close, volume, pd.DataFrame(index=days)), cfg, model_params)
 
-    assert list(result.columns) == ["block_start", "block_end", "max_drawdown_reduction", "agent_mdd", "baseline_mdd"]
+    assert list(result.columns) == [
+        "block_start", "block_end", "max_drawdown_reduction", "agent_mdd", "baseline_mdd",
+        "agent_return", "baseline_return", "agent_cost", "baseline_cost"]
     assert len(result) == fit.call_count == len(windows)
     assert simulate.call_count == 2 * len(windows)
     assert list(pd.to_datetime(result["block_start"])) == [score[0] for _, score in windows]
@@ -129,3 +131,92 @@ def test_unit_walk_forward_scores_one_row_per_window(monkeypatch: pytest.MonkeyP
         selection.walk_forward_scores(
             table.assign(target_action=float("nan")), (close, volume, pd.DataFrame(index=days)), cfg, model_params,
         )
+
+
+def _grid_config() -> dict:
+    """Return a two-parameter grid and a fixed model setting."""
+    return {"problem": {"problem_type": "classification"},
+            "model": {"params": {"max_iter": 1000}},
+            "selection": {"grid": {"C": [.1, 1], "class_weight": [None, "balanced"]}}}
+
+
+def test_unit_grid_picks_the_highest_median(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Try exactly the Cartesian product and rank by median, not by the largest score."""
+    scores = Mock(side_effect=[
+        pd.DataFrame({"max_drawdown_reduction": [0.0, 0.0, 1.0]}),
+        pd.DataFrame({"max_drawdown_reduction": [.1, .1, .1]}),
+        pd.DataFrame({"max_drawdown_reduction": [.2, .2, .2]}),
+        pd.DataFrame({"max_drawdown_reduction": [.3, .3, -.9]}),
+    ])
+    monkeypatch.setattr(selection, "walk_forward_scores", scores)
+    best, trials = selection.grid_search(pd.DataFrame(), (), _grid_config())
+    # pandas stores a missing class_weight (None) as NaN in the trial table, so compare it as missing, not as None.
+    class_weights = trials["class_weight"].astype(object).where(trials["class_weight"].notna(), None)
+    assert list(zip(trials["C"], class_weights)) == [(.1, None), (.1, "balanced"), (1, None), (1, "balanced")]
+    assert trials["median_max_drawdown_reduction"].tolist() == pytest.approx([0, .1, .2, .3])
+    assert best == {"max_iter": 1000, "C": 1, "class_weight": "balanced"}
+    assert scores.call_count == 4
+
+
+def test_unit_grid_logs_every_try(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Record every grid trial under the tracking prefix and keep the first tie."""
+    scores = pd.DataFrame({"max_drawdown_reduction": [.02, .01]})
+    monkeypatch.setattr(selection, "walk_forward_scores", Mock(return_value=scores))
+    log = Mock()
+    monkeypatch.setattr(selection.tracking, "log_metrics", log)
+    run = object()
+    best, _ = selection.grid_search(pd.DataFrame(), (), _grid_config(), run)
+    assert best["C"] == .1 and best["class_weight"] is None
+    assert [call.args[1]["trial"] for call in log.call_args_list] == [1, 2, 3, 4]
+    assert all(call.args[0] is run and call.kwargs["prefix"] == "grid/" for call in log.call_args_list)
+
+
+@pytest.mark.parametrize("grid,message", [
+    ({}, "nonempty"), ({"C": []}, "nonempty"), ({"typo": [1]}, "Unsupported"),
+    ({"random_state": [0]}, "Unsupported"),
+])
+def test_unit_grid_raises_for_bad_parameters(grid: dict, message: str) -> None:
+    """Reject invalid grids before attempting any candidate."""
+    cfg = _grid_config()
+    cfg["selection"]["grid"] = grid
+    with pytest.raises(ValueError, match=message):
+        selection.grid_search(pd.DataFrame(), (), cfg)
+
+
+def test_unit_frequency_comparison_one_row_per_review_on_train_years(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each review frequency gets its own decision table and walk-forward fit, on the train years only."""
+    days = pd.date_range("2017-01-02", "2020-12-31", freq="B")
+    market = (pd.DataFrame({"ETF": 100.0}, index=days), pd.DataFrame({"ETF": 1000.0}, index=days),
+              pd.DataFrame(index=days))
+    cfg = {"split": {"train_end": "2019-12-31"}, "portfolio": {"first_decision_date": "2017-02-03"},
+           "target_weights": {"policy": {"ETF": 1.0}}, "rebalancing": {"review": "weekly", "method": "smart"}}
+    seen = []
+
+    def build(close, volume, features_frame, target, start, end, settings):
+        seen.append((settings["rebalancing"]["review"], close.index.max(), start, end))
+        return pd.DataFrame({"signal": 0.0}, index=days[:5])
+
+    def scores(table, market_frames, settings, params):
+        factor = {"daily": 1.0, "weekly": 2.0, "monthly": 3.0}[settings["rebalancing"]["review"]]
+        return pd.DataFrame({
+            "max_drawdown_reduction": [0.1 * factor, 0.3 * factor, float("nan")],
+            "agent_mdd": [-0.1, -0.2, -0.3], "baseline_mdd": [-0.2, -0.4, -0.6],
+            "agent_return": [0.05, 0.06, 0.07], "baseline_return": [0.04, 0.05, 0.06],
+            "agent_cost": [0.001, 0.002, 0.003], "baseline_cost": [0.0, 0.0, 0.0]})
+
+    monkeypatch.setattr(portfolio, "build_decision_table", build)
+    monkeypatch.setattr(selection, "walk_forward_scores", scores)
+
+    result = selection.frequency_comparison(market, cfg, {"C": 1.0})
+
+    assert result["review"].tolist() == ["daily", "weekly", "monthly"]
+    assert [item[0] for item in seen] == ["daily", "weekly", "monthly"]
+    assert all(item[1] == pd.Timestamp("2019-12-31") and item[3] == "2019-12-31" for item in seen)
+    assert result["blocks"].tolist() == [3, 3, 3]
+    assert result["blocks_scored"].tolist() == [2, 2, 2]
+    assert result["median_max_drawdown_reduction"].tolist() == pytest.approx([0.2, 0.4, 0.6])
+    assert result["model_median_max_drawdown"].tolist() == pytest.approx([-0.2] * 3)
+    assert result["rule_median_max_drawdown"].tolist() == pytest.approx([-0.4] * 3)
+    assert result["model_median_annual_return"].tolist() == pytest.approx([0.06] * 3)
+    assert result["rule_median_annual_trading_cost"].tolist() == pytest.approx([0.0] * 3)
+    assert cfg["rebalancing"]["review"] == "weekly"          # the caller's config is not changed

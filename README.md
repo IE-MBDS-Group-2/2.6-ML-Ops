@@ -145,6 +145,7 @@ One command runs every step and writes these files. Git ignores them.
 | `models/model.joblib` | the fitted model |
 | `reports/predictions.csv` | one recommendation per decision date, with a fallback flag |
 | `reports/metrics.json` | validation scores, model against today's rule, and the gate result |
+| `reports/selection.csv` | parameter trials and median training-period walk-forward scores when `selection.enabled` is true |
 | `reports/robustness.json` | historical hindsight diagnostic, validation under flat and realistic costs, number of evaluated candidates, and test-audit status |
 
 The robustness report records episode exclusion and Holm-adjusted challenger comparisons when the model passes the validation gate and reaches the test audit. Otherwise the report marks the test period as sealed. With W&B tracking active, the run also logs a robustness table.

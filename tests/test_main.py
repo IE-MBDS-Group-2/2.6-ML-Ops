@@ -274,6 +274,37 @@ def test_unit_gate_not_met_saves_nothing(tmp_path, monkeypatch):
     assert (predictions["recommendation"] == predictions["prediction"]).all()
 
 
+def test_integration_grid_search_reports_trials(tmp_path: Path, monkeypatch) -> None:
+    """Only training rows reach the grid, and its trial count reaches the robustness report."""
+    cfg = _pipeline_setup(tmp_path, monkeypatch)
+    _force_gate(monkeypatch, False)
+    cfg["selection"].update(enabled=True, first_train_end="2020-12-31", grid={"C": [.1, 1.]})
+    logs = _record(monkeypatch, "log_metrics")
+    grid_search = main.selection.grid_search
+
+    def check_training_boundary(table: pd.DataFrame, market: tuple, settings: dict, tracker: object) -> tuple:
+        """Reject validation or test dates before evaluating the real parameter grid."""
+        cutoff = pd.Timestamp(settings["split"]["train_end"])
+        assert table.index.max() <= cutoff
+        assert all(frame.index.max() <= cutoff for frame in market)
+        return grid_search(table, market, settings, tracker)
+
+    monkeypatch.setattr(main.selection, "grid_search", check_training_boundary)
+
+    main.run(cfg)
+
+    trials = pd.read_csv(tmp_path / cfg["paths"]["selection"])
+    assert trials["C"].tolist() == [.1, 1.]
+    assert len([call for call in logs if call[1]["prefix"] == "grid/"]) == len(trials)
+    report = json.loads((tmp_path / cfg["paths"]["robustness"]).read_text(encoding="utf-8"))
+    assert report["versions_tried"] == len(trials)
+    assert report["test"]["status"] == "sealed"
+    assert cfg["model"]["params"] == config.load_config()["model"]["params"]
+    comparison = pd.read_csv(tmp_path / cfg["paths"]["frequency_comparison"])
+    assert comparison["review"].tolist() == ["daily", "weekly", "monthly"]
+    assert comparison["blocks"].gt(0).all()
+
+
 def test_unit_error_marks_the_run_failed(tmp_path, monkeypatch):
     """An error inside the pipeline closes the tracked run as failed and exits with code 1."""
     _pipeline_setup(tmp_path, monkeypatch)
