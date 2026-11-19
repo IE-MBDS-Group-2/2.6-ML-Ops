@@ -398,7 +398,7 @@ def health(http_request: Request) -> HealthResponse:
     loaded = state.model is not None
     return HealthResponse(status="ok", model_loaded=loaded, model_version=state.model_version,
                           policy=POLICY_MODEL if loaded else POLICY_RULE, version=state.env["APP_VERSION"],
-                          commit=state.env["RENDER_GIT_COMMIT"])
+                          commit=state.env["APP_COMMIT"])
 
 
 @app.post("/predict", response_model=PredictResponse)

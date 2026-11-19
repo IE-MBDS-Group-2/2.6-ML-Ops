@@ -64,6 +64,7 @@ Decisions:
   reason, proposed portfolio and trades out (D9)
 - CI runs the pipeline on synthetic prices from `scripts/make_sample_prices.py`; no secrets in CI (D10)
 - Render hosts the API, deployed by GitHub Release; the API loads the W&B model alias `prod` (D11, D12)
+  (19 Nov 2026: Render replaced by the self-hosted GHCR deploy, Stage 3, PR #127 and the infra work; see docs/DEPLOY.md)
 - W&B team (entity) `ie-mbds-group-2`, project `etf-rebalancing`; everyone uses their own API key in `.env`;
   tracking is optional and off in tests and CI (D13)
 - Scope tiers: Must = the CI/CD chain plus the README's commitments (RL agent, rule challengers, benchmarks,

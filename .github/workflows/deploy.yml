@@ -10,7 +10,7 @@
 # Runbook   docs/DEPLOY.md (set-up, dry run, release, rollback)
 #
 # Why the commit: the host keeps the old container serving until the new one is healthy (canary on a side port),
-# so the smoke test must know it is talking to the new image. The image carries its commit (RENDER_GIT_COMMIT,
+# so the smoke test must know it is talking to the new image. The image carries its commit (APP_COMMIT,
 # the name the API already reads) and its version (APP_VERSION), and /health returns both.
 
 name: deploy
