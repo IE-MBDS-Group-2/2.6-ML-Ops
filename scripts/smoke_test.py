@@ -36,6 +36,7 @@ ACTIONS = (0.0, 0.5, 1.0)
 HTTP_OK = 200
 MAX_CALL_SECONDS = 60      # one HTTP call never waits longer than this, whatever the overall timeout
 SHORT_SHA = 7              # the shortest commit SHA accepted as a match
+USER_AGENT = "etf-smoke-test/1"   # Cloudflare can refuse urllib's default agent (HTTP 403, error 1010)
 
 
 def call(url: str, timeout: float, body: dict | None = None) -> tuple[int, dict | None, str]:
@@ -46,7 +47,8 @@ def call(url: str, timeout: float, body: dict | None = None) -> tuple[int, dict 
     Why:     every failure becomes data the caller can report in one line, never an exception.
     """
     data = None if body is None else json.dumps(body).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
+    request = urllib.request.Request(url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             status, text = response.status, response.read().decode("utf-8")
