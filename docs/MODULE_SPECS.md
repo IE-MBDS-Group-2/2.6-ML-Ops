@@ -741,8 +741,10 @@ def explain(state_row: pd.Series, action: float, fallback: bool, cfg: dict) -> s
   outside the 5-point band" or "No trade: every holding is within 2 points of target".
 - Honest limits, enforced in code and written in the model card: the model is trained for the target set in
   config. With a calculated target the request falls back to the calendar-and-band rule (`fallback: true`,
-  reason given) unless the pipeline was retrained with that target. A calculated target changes the mandate the
-  Investment Committee approved, so the response always reports tracking error to the policy weights.
+  reason given). Calculated-target serving uses the rule even after research retraining with that target.
+  A calculated target changes the mandate the Investment Committee approved. The API reason reports
+  estimated tracking error to the policy weights using the request's recent prices.
+  The API and pipeline load reviewed weights from `target_weights.calculated`, refitted at each retrain.
 - **Three places catch a wrong value, all from `config.ALLOWED_VALUES`:** `load_config` at start-up; the API's
   request model (enumerations, so a wrong value is a 422 that lists the allowed ones and `/docs` shows a
   dropdown); and `resolve_target` / `resolve_policy`, which raise `ValueError` with the allowed list.

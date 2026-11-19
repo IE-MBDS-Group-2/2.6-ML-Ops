@@ -93,7 +93,7 @@ def stored_target(method: str, cfg: dict) -> pd.Series:
     weights = settings["policy"] if method == "policy" else settings.get("calculated", {}).get(method)
     if weights is None:
         raise ValueError(f"No stored weights for {method!r}. Run python -m scripts.fit_targets at retrain time.")
-    return pd.Series(weights, dtype=float).reindex(cfg["data"]["tickers"])
+    return pd.Series(weights, dtype=float).reindex(cfg.get("data", {}).get("tickers", list(weights)))
 
 
 def _check_fit_inputs(target: pd.Series, tickers: list[str], train_returns: pd.DataFrame | None) -> None:
@@ -138,8 +138,8 @@ def target_fit(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None)
     difference = (target.reindex(tickers) - policy).to_numpy()
     covariance = train_returns[tickers].cov().to_numpy()
     tracking = float(np.sqrt(difference @ covariance @ difference * features.TRADING_DAYS_PER_YEAR))
-    reason = ("The model was trained for the policy weights, so with this target the calendar-and-band rule "
-              f"decides. Expected tracking error to the policy weights: {tracking:.1%} a year.")
+    reason = ("Smart serving is restricted to the policy weights, so with this target the calendar-and-band "
+              f"rule decides. Expected tracking error to the policy weights: {tracking:.1%} a year.")
     logger.info("Target is not the policy mix: fallback to the rule, expected tracking error %.4f", tracking)
     return {"fallback": True, "reason": reason, "expected_tracking_error": tracking}
 

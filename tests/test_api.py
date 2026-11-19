@@ -259,11 +259,30 @@ def test_integration_band_rule_uses_stored_calculated_weights(start_app, target_
     assert body["fallback"] is False
 
 
-def test_integration_calculated_target_without_train_years_is_400(start_app):
-    with start_app(None) as client:
-        response = client.post("/predict", json=request_body(target_method="min_variance"))
-    assert response.status_code == 400
-    assert "train" in response.json()["detail"]
+@pytest.mark.parametrize("target_method", config.CALCULATED_TARGETS)
+@pytest.mark.parametrize("loaded", [True, False])
+def test_integration_calculated_smart_target_falls_back_with_reason(start_app, fitted_model, target_method, loaded):
+    """Calculated targets work with smart and bypass a model trained for the policy mix."""
+    with start_app(fitted_model if loaded else None) as client:
+        response = client.post("/predict", json=request_body(target_method=target_method))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["fallback"] is True
+    assert body["prediction"] is None
+    assert body["probability"] is None
+    assert "calendar-and-band" in body["reason"]
+    assert "tracking error" in body["reason"]
+    assert body["recommendation"] == body["rule_action"]
+
+
+def test_integration_policy_request_does_not_use_a_model_for_another_target(start_app, fitted_model, monkeypatch):
+    """A config fitted for a calculated mix cannot serve model decisions for the policy mix."""
+    monkeypatch.setitem(CFG["target_weights"], "method", "min_variance")
+    with start_app(fitted_model) as client:
+        response = client.post("/predict", json=request_body(target_method="policy"))
+    assert response.status_code == 200, response.text
+    assert response.json()["fallback"] is True
+    assert response.json()["prediction"] is None
 
 
 # ---------- logging ----------

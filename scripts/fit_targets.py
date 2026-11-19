@@ -30,13 +30,13 @@ def _yaml_with_targets(source: str, weights: dict, provenance: str) -> str:
             end = last_value.end_mark.line + (last_value.end_mark.column != 0)
     lines = source.splitlines(keepends=True)
     block = yaml.safe_dump({"calculated": weights}, sort_keys=False).splitlines(keepends=True)
-    block.insert(1, f"  # {provenance}\n")
+    block[1:1] = [f"  # {line}\n" for line in provenance.splitlines()]
     return "".join([*lines[:start], *("  " + line for line in block), *lines[end:]])
 
 
 def fit_targets(config_path: Path, prices_path: Path) -> dict:
     """Fit train-window targets from one frozen snapshot and atomically update its config file."""
-    cfg = config.load_config(config_path)
+    cfg = config.load_config(config_path, validate_calculated=False)
     source = config_path.read_text(encoding="utf-8")
     checksum = hashlib.sha256(prices_path.read_bytes()).hexdigest()
     data = cfg["data"]
@@ -49,8 +49,8 @@ def fit_targets(config_path: Path, prices_path: Path) -> dict:
                for method in config.CALCULATED_TARGETS}
     if hashlib.sha256(prices_path.read_bytes()).hexdigest() != checksum:
         raise ValueError("The snapshot changed during fitting. Retry with a frozen file.")
-    provenance = (f"SHA-256: {checksum}; "
-                  f"return dates: {returns.index[0]:%Y-%m-%d} to {returns.index[-1]:%Y-%m-%d}; "
+    provenance = (f"SHA-256: {checksum}\n"
+                  f"Return dates: {returns.index[0]:%Y-%m-%d} to {returns.index[-1]:%Y-%m-%d}; "
                   f"training cut-off: {cfg['split']['train_end']}.")
     updated = _yaml_with_targets(source, weights, provenance)
     with NamedTemporaryFile("w", encoding="utf-8", dir=config_path.parent, delete=False) as handle:
@@ -75,7 +75,7 @@ def main() -> None:
     options = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     try:
-        cfg = config.load_config(options.config)
+        cfg = config.load_config(options.config, validate_calculated=False)
         prices_path = options.prices or config.resolve_paths(cfg, options.config.parent)["raw_data"]
         fit_targets(options.config, prices_path)
     except (KeyError, OSError, ValueError) as error:

@@ -38,7 +38,8 @@ target_weights:                  # DECISION D19: the mix the portfolio is rebala
                                  # min_variance | max_sharpe | mean_variance | risk_parity
   policy: {SPY: 0.40, EFA: 0.20, IEF: 0.30, GLD: 0.05, BIL: 0.05}   # your own targets; must sum to 1
   calculated:
-    # SHA-256: 3cce101c20eb1bcd5f453176affaa3c7f4a3f470a89973de47617134d6705526; return dates: 2007-09-10 to 2019-12-31; training cut-off: 2019-12-31.
+    # SHA-256: 3cce101c20eb1bcd5f453176affaa3c7f4a3f470a89973de47617134d6705526
+    # Return dates: 2007-09-10 to 2019-12-31; training cut-off: 2019-12-31.
     min_variance:
       SPY: 0.2532459296878587
       EFA: 0.0
@@ -63,7 +64,6 @@ target_weights:                  # DECISION D19: the mix the portfolio is rebala
       IEF: 0.5914027752442063
       GLD: 0.1486641074774892
       BIL: 0.0
-
 rebalancing:                     # DECISION D17/D19: how the user wants to rebalance
   method: "smart"                # smart (our model decides) | calendar | tolerance_band | calendar_and_band
   review: "weekly"               # daily | weekly | monthly: how often the portfolio is looked at

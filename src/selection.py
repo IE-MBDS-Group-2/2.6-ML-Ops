@@ -9,7 +9,8 @@ import pandas as pd
 from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
 
-from src import config, evaluate, features, portfolio, tracking, train
+from src import (allocation, benchmarks, config, evaluate, features, portfolio,
+                 tracking, train)
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ def _score_window(
     """
     start, end = score_dates[0], score_dates[-1]
     period = start.date().isoformat(), end.date().isoformat()
-    target_weights = pd.Series(cfg["target_weights"]["policy"], dtype=float)
+    target_weights = allocation.stored_target(cfg["target_weights"].get("method", "policy"), cfg)
     rule = portfolio.make_current_rule_policy(
         target_weights, portfolio.decision_dates(score_dates, *period, portfolio.review_frequency(cfg)), cfg)
     model_metrics = _policy_metrics(_model_policy(model, columns), market_data, target_weights, period, cfg)
@@ -136,6 +137,36 @@ def _fit_candidate(rows: pd.DataFrame, columns: list[str], cfg: dict, model_para
     )
 
 
+def _window_target(table: pd.DataFrame, market_data: tuple, cfg: dict,
+                   train_dates: pd.DatetimeIndex) -> tuple[pd.DataFrame, dict]:
+    """Refit a calculated target before each scoring window to prevent future allocation leakage."""
+    method = cfg["target_weights"].get("method", "policy")
+    if method == "policy":
+        return table, cfg
+    cutoff = str(train_dates[-1].date())
+    settings = {**cfg, "split": {**cfg["split"], "train_end": cutoff}}
+    returns = benchmarks.training_returns(market_data[0], settings)
+    weights = benchmarks.fit_weights(returns, method, cfg["benchmarks"])
+    settings["target_weights"] = {**cfg["target_weights"], "calculated": {
+        **cfg["target_weights"].get("calculated", {}), method: weights.to_dict()}}
+    rebuilt = portfolio.build_decision_table(
+        *market_data, weights, cfg["portfolio"]["first_decision_date"], cfg["split"]["train_end"], settings)
+    return rebuilt, settings
+
+
+def _fit_window(table: pd.DataFrame, market_data: tuple, cfg: dict, model_params: dict, dates: tuple) -> dict:
+    """Fit one model and target using decisions with labels available before the scoring block."""
+    train_dates, score_dates = dates
+    table, settings = _window_target(table, market_data, cfg, train_dates)
+    calendar = market_data[0].loc[:cfg["split"]["train_end"]].index
+    columns = table.columns.drop([cfg["problem"]["target_column"], portfolio.RULE_ACTION_COLUMN],
+                                 errors="ignore").tolist()
+    reward_end = portfolio.execution_schedule(calendar, table.index)["reward_end"]
+    eligible = table.index.isin(train_dates) & reward_end.lt(score_dates[0])
+    model = _fit_candidate(table.loc[eligible], columns, settings, model_params)
+    return _score_window(model, columns, market_data, score_dates, settings)
+
+
 def walk_forward_scores(table: pd.DataFrame, market_data: tuple, cfg: dict, model_params: dict) -> pd.DataFrame:
     """Fit and score one candidate per chronological block inside the training period.
 
@@ -150,19 +181,9 @@ def walk_forward_scores(table: pd.DataFrame, market_data: tuple, cfg: dict, mode
     windows = walk_forward_windows(
         calendar, settings["first_train_end"], last_end, settings["block"], settings["gap_days"],
     )
-    train_table = table.loc[:last_end]
-    columns = train_table.columns.drop([cfg["problem"]["target_column"], portfolio.RULE_ACTION_COLUMN],
-                                       errors="ignore").tolist()
-    reward_end = portfolio.execution_schedule(calendar, train_table.index)["reward_end"]
-    rows = []
-    for train_dates, score_dates in windows:
-        # Both the decision and its forward-looking label must precede the scoring period.
-        model = _fit_candidate(
-            train_table.loc[train_table.index.isin(train_dates) & reward_end.lt(score_dates[0])],
-            columns, cfg, model_params,
-        )
-        rows.append(_score_window(model, columns, market_data, score_dates, cfg))
-    return pd.DataFrame(rows)
+    return pd.DataFrame([
+        _fit_window(table.loc[:last_end], market_data, cfg, model_params, window) for window in windows
+    ])
 
 
 def _parameter_grid(cfg: dict) -> dict:
@@ -224,7 +245,7 @@ def frequency_comparison(market_data: tuple, cfg: dict, model_params: dict) -> p
     """
     train_end = cfg["split"]["train_end"]
     training_market = tuple(frame.loc[:train_end] for frame in market_data)
-    target = pd.Series(cfg["target_weights"]["policy"], dtype=float)
+    target = allocation.stored_target(cfg["target_weights"].get("method", "policy"), cfg)
     rows = []
     for review in config.ALLOWED_VALUES[("rebalancing", "review")]:
         settings = {**cfg, "rebalancing": {**cfg["rebalancing"], "review": review}}

@@ -361,6 +361,24 @@ def _rule_decision(method: str, state: pd.DataFrame, close_wide: pd.DataFrame, t
             "reason": f"{NO_MODEL_REASON} {reason}" if fallback else reason}
 
 
+def _target_decision(method: str, model: Pipeline | None, state: pd.DataFrame, close: pd.DataFrame,
+                     target: pd.Series, target_method: str, cfg: dict) -> dict:
+    """Apply the chosen rule and explain a smart fallback for a different allocation target."""
+    if method == SMART and target_method != "policy":
+        decision = _rule_decision("calendar_and_band", state, close, target, cfg)
+        fit = allocation.target_fit(target, cfg, close.pct_change(fill_method=None).iloc[1:])
+        decision.update(fallback=True, reason=fit["reason"] or
+                        "Calculated targets use the calendar-and-band rule for smart serving.")
+        return decision
+    if method == SMART and model is not None and cfg["target_weights"]["method"] == "policy":
+        return _model_decision(model, state, cfg)
+    decision = _rule_decision(method, state, close, target, cfg)
+    if method == SMART and cfg["target_weights"]["method"] != "policy":
+        decision["reason"] = ("The configured model target differs from the requested policy weights. "
+                              "The calendar-and-band rule decides. " + decision["reason"])
+    return decision
+
+
 def recommend(body: PredictRequest, model: Pipeline | None, model_version: str, cfg: dict) -> PredictResponse:
     """The whole /predict flow, calling only existing modules.
 
@@ -375,15 +393,9 @@ def recommend(body: PredictRequest, model: Pipeline | None, model_version: str, 
                                                  names["ticker_column"], names["value_column"])
     prices = market_inputs(body, cfg)
     method = body.rebalancing_method.value
-    if method == SMART:
-        target = allocation.resolve_target(body.target_method.value, cfg, None)
-    else:
-        target = allocation.stored_target(body.target_method.value, cfg)
+    target = allocation.stored_target(body.target_method.value, cfg)
     state = portfolio.live_state(*prices, weights, body.drawdown, body.weeks_since_rebalance, target, cfg)
-    if method == SMART and model is not None:
-        decision = _model_decision(model, state, cfg)
-    else:
-        decision = _rule_decision(method, state, prices[0], target, cfg)
+    decision = _target_decision(method, model, state, prices[0], target, body.target_method.value, cfg)
     proposed = trades.proposed_portfolio(weights, target, decision["recommendation"], total)
     orders = trades.trade_list(weights, proposed, total, cfg["portfolio"]["min_trade"])
     return PredictResponse(

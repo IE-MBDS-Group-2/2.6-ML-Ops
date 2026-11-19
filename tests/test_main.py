@@ -457,3 +457,11 @@ def test_unit_versions_tried_counts_only_versions_scored_on_validation():
     assert main._versions_tried(cfg, {}) == 1
     assert main._versions_tried(cfg, {"rl": {}}) == 4                     # classifier plus the reported agent
     assert main._versions_tried({**cfg, "model": {"type": "fitted_q"}}, {"rl": {}}) == 3
+
+
+@pytest.mark.parametrize("method", config.CALCULATED_TARGETS)
+def test_unit_pipeline_uses_stored_target(method):
+    """Changing the configured method selects its reviewed weights throughout the pipeline."""
+    cfg = config.load_config()
+    cfg["target_weights"]["method"] = method
+    assert main._target_weights(cfg).to_dict() == cfg["target_weights"]["calculated"][method]

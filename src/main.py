@@ -32,8 +32,8 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
-from src import (benchmarks, clean_data, config, evaluate, features, infer,
-                 load_data)
+from src import (allocation, benchmarks, clean_data, config, evaluate,
+                 features, infer, load_data)
 from src import logger as log_setup
 from src import (portfolio, rl_agent, robustness, rules, selection, tracking,
                  trades, train, utils)
@@ -123,7 +123,7 @@ def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
 
 def _target_weights(cfg: dict) -> pd.Series:
     """The model portfolio's target weights from config.yaml."""
-    return pd.Series(cfg["target_weights"]["policy"], dtype=float)
+    return allocation.stored_target(cfg["target_weights"]["method"], cfg)
 
 
 def _feature_columns(table: pd.DataFrame, cfg: dict) -> list[str]:
@@ -377,7 +377,7 @@ def _recommendations(model: Pipeline | None, columns: list[str], cfg: dict) -> p
         close_wide, volume_wide, market, _target_weights(cfg),
         str(ready[0].date()), str(close_wide.index[-1].date()), cfg)
     rule_actions = table[portfolio.RULE_ACTION_COLUMN]
-    if model is None:
+    if model is None or cfg["target_weights"]["method"] != "policy":
         predictions = pd.DataFrame({"prediction": rule_actions, "probability": 0.0}, index=table.index)
         return infer.apply_fallback(predictions, rule_actions, pd.Series(True, index=table.index),
                                     cfg["fallback"]["min_probability"])
@@ -534,7 +534,7 @@ def _positions_action(approved: Pipeline | None, columns: list[str], weights: pd
     state = portfolio.live_state(close_wide, volume_wide, market, weights, 0.0, 0,
                                  _target_weights(cfg).reindex(weights.index), cfg)
     rule = state[portfolio.RULE_ACTION_COLUMN]
-    if approved is None:
+    if approved is None or cfg["target_weights"]["method"] != "policy":
         return float(rule.iloc[0])
     inputs = state[columns]
     answer = infer.apply_fallback(infer.run_inference(approved, inputs, include_proba=True), rule,

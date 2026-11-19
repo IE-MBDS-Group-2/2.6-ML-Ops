@@ -63,10 +63,11 @@ ALLOWED_ENV_VALUES = {
 }
 
 
-def load_config(path: Path = CONFIG_PATH) -> dict:
+def load_config(path: Path = CONFIG_PATH, *, validate_calculated: bool = True) -> dict:
     """Read config.yaml once and fail fast if anything in it cannot work.
 
-    Inputs:  path, the YAML file (normally CONFIG_PATH).
+    Inputs:  path, the YAML file (normally CONFIG_PATH); validate_calculated, disabled only by the target
+             refit script so outdated generated weights can be replaced.
     Outputs: the settings as a dictionary.
     Why:     one source of truth for every setting; a wrong value stops the run before any data is read.
     Raises:  FileNotFoundError if the file is missing; ValueError if it is not a mapping or a setting has a
@@ -83,7 +84,7 @@ def load_config(path: Path = CONFIG_PATH) -> dict:
     if missing:
         raise KeyError(f"config.yaml is missing sections: {missing}")
     _check_allowed_values(cfg)
-    _check_target_weights(cfg)
+    _check_target_weights(cfg, validate_calculated)
     _check_rebalancing(cfg)
     _check_rl_seeds(cfg)
     logger.info("Config loaded from %s: %d sections", path, len(cfg))
@@ -101,7 +102,7 @@ def _check_allowed_values(cfg: dict) -> None:
             raise ValueError(f"{section}.{key} is {value!r}. Allowed: {', '.join(allowed)}.")
 
 
-def _check_target_weights(cfg: dict) -> None:
+def _check_target_weights(cfg: dict, validate_calculated: bool = True) -> None:
     """Validate the policy and every stored allocation against the configured tickers."""
     settings = cfg["target_weights"]
     policy = settings.get("policy")
@@ -109,7 +110,7 @@ def _check_target_weights(cfg: dict) -> None:
         raise KeyError("config.yaml is missing keys: ['target_weights.policy'] (one weight per ticker).")
     tickers = cfg["data"].get("tickers", [])
     _check_weight_vector("target_weights.policy", policy, tickers)
-    if "calculated" not in settings and settings["method"] == "policy":
+    if not validate_calculated or ("calculated" not in settings and settings["method"] == "policy"):
         return
     calculated = settings.get("calculated")
     if not isinstance(calculated, dict) or calculated.keys() != set(CALCULATED_TARGETS):
@@ -117,6 +118,20 @@ def _check_target_weights(cfg: dict) -> None:
                          "Run python -m scripts.fit_targets with the selected snapshot.")
     for method, weights in calculated.items():
         _check_weight_vector(f"target_weights.calculated.{method}", weights, tickers)
+        _check_calculated_limits(method, weights, cfg)
+
+
+def _check_calculated_limits(method: str, weights: dict, cfg: dict) -> None:
+    """Reject stored risky allocations that exceed the cap or allocate to the cash ticker."""
+    params = cfg["benchmarks"]
+    cap = params.get("max_weight", 1.0)
+    if type(cap) not in (int, float) or not 0 < cap <= 1:
+        raise ValueError("benchmarks.max_weight must be a finite number above 0 and at most 1.")
+    if max(weights.values()) > cap + WEIGHT_SUM_TOLERANCE:
+        raise ValueError(f"target_weights.calculated.{method} exceeds benchmarks.max_weight.")
+    cash = params.get("cash_ticker")
+    if cash is not None and weights.get(cash) != 0.0:
+        raise ValueError(f"target_weights.calculated.{method} must give the cash ticker {cash!r} zero weight.")
 
 
 def _check_weight_vector(name: str, weights: object, tickers: list[str]) -> None:

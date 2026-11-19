@@ -220,3 +220,29 @@ def test_unit_frequency_comparison_one_row_per_review_on_train_years(monkeypatch
     assert result["model_median_annual_return"].tolist() == pytest.approx([0.06] * 3)
     assert result["rule_median_annual_trading_cost"].tolist() == pytest.approx([0.0] * 3)
     assert cfg["rebalancing"]["review"] == "weekly"          # the caller's config is not changed
+
+
+def test_unit_calculated_window_target_ignores_prices_after_its_training_end(monkeypatch) -> None:
+    """Future prices cannot change the allocation used to label an earlier training window."""
+    from scripts.make_sample_prices import make_sample_prices
+    from src import clean_data, config
+
+    cfg = config.load_config()
+    cfg["target_weights"]["method"] = "min_variance"
+    cfg["split"]["train_end"] = "2008-12-31"
+    data = cfg["data"]
+    cols = data["columns"]
+    prices = make_sample_prices(data["tickers"], data["start"], cfg["split"]["train_end"], 12, cols)
+    close = clean_data.to_wide(prices, cols["close_column"], data["tickers"],
+                               cols["date_column"], cols["ticker_column"])
+    close.index = pd.to_datetime(close.index)
+    volume = close * 1000
+    market = pd.DataFrame(index=close.index)
+    dates = close.loc[:"2007-12-31"].index
+    monkeypatch.setattr(portfolio, "build_decision_table", lambda *args: pd.DataFrame())
+    _, initial = selection._window_target(pd.DataFrame(), (close, volume, market), cfg, dates)
+    changed = close.copy()
+    changed.loc["2008":, "SPY"] *= 100
+    _, poisoned = selection._window_target(pd.DataFrame(), (changed, volume, market), cfg, dates)
+    assert initial["target_weights"] == poisoned["target_weights"]
+    assert cfg["split"]["train_end"] == "2008-12-31"
