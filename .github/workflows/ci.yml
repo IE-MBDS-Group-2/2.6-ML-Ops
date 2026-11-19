@@ -32,12 +32,12 @@ jobs:
           pipx run "isort==${version}" --check-only src tests scripts
 
       # No new secret in any tracked file. .secrets.baseline lists the known harmless findings (test fixtures);
-      # conda-lock.yml is excluded (its package checksums look like secrets). Compared by file and secret hash,
+      # conda-lock.yml and the baseline itself are excluded (their checksums and hashes look like secrets). Compared by file and secret hash,
       # so moving a known line does not fail the check; any new finding does.
       - name: detect-secrets (before the environment)
         run: |
           version="$(grep -A1 '^- name: detect-secrets$' conda-lock.yml | sed -n 's/^  version: //p')"
-          pipx run "detect-secrets==${version}" scan --exclude-files 'conda-lock\.yml' > "$RUNNER_TEMP/secrets.json"
+          pipx run "detect-secrets==${version}" scan --exclude-files '(conda-lock\.yml|\.secrets\.baseline)$' > "$RUNNER_TEMP/secrets.json"
           python3 - "$RUNNER_TEMP/secrets.json" <<'PY'
           import json, sys
           def found(path):
