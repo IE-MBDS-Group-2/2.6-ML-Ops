@@ -4,7 +4,7 @@
 # Trigger   A GitHub Release (or pre-release) is published: CI, build, push, smoke test
 #           A manual run from a release tag: rollback, re-points :release to that tag's existing image (no rebuild)
 # Flow      check the ref -> CI on that commit (ci.yml) -> build with the commit and version baked in
-#           -> push ghcr.io/<org>/<repo>:<sha>, :<tag> and :release -> the host (pull model) picks up :release
+#           -> push ghcr.io/<org>/etf-rebalancing-api:<sha>, :<tag> and :release -> the host (pull model) picks up :release
 #           -> smoke test the live URL until /health reports that commit
 # Variables SERVICE_URL (repository variable): the public address of the service. No secrets: GITHUB_TOKEN pushes
 # Runbook   docs/DEPLOY.md (set-up, dry run, release, rollback)
@@ -30,6 +30,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
+  IMAGE_NAME: etf-rebalancing-api   # the package name in GHCR; the host follows <registry>/<org>/<name>:release
 
 jobs:
   check-ref:
@@ -48,7 +49,7 @@ jobs:
           esac
           mode=release
           [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && mode=rollback
-          image="$REGISTRY/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          image="$REGISTRY/$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')/$IMAGE_NAME"
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "$mode of $GITHUB_REF_NAME (commit $GITHUB_SHA) to $image"
