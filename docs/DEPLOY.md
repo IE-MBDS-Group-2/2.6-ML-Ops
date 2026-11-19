@@ -5,7 +5,7 @@ How a release reaches the live service, and how to put the previous one back. Th
 
 ```text
 GitHub Release published -> deploy.yml: CI on that commit -> one docker build (commit and version baked in)
-  -> push ghcr.io/ie-mbds-group-2/2.6-ml-ops:<sha>, :<tag>, :release
+  -> push ghcr.io/ie-mbds-group-2/etf-rebalancing-api:<sha>, :<tag>, :release
   -> the host pulls :release (every minute), canary-tests it on a side port, swaps it in when /health is ok
   -> smoke_test.py waits until https://etf-api.mpholdings.co/health reports that commit and that version
 ```
@@ -20,7 +20,7 @@ credentials from GitHub, CI never needs access to the host, and no port is open 
    `https://etf-api.mpholdings.co` (no trailing `/`). No secret is needed: the workflow pushes with its own token.
 2. **Organisation:** Settings -> Packages: allow members to create public packages, and allow GitHub Actions to
    publish packages for this repository.
-3. **After the first push** (the dry run below): Organisation -> Packages -> `2.6-ml-ops` -> Package settings ->
+3. **After the first push** (the dry run below): Organisation -> Packages -> `etf-rebalancing-api` -> Package settings ->
    Change visibility -> **Public**, so the host can pull without a token. The image label links the package to
    this repository.
 4. **The host** (operator side, already done): follows `:release` with a one-minute timer, canary-tests a new image
