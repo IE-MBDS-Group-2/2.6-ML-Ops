@@ -1,3 +1,0 @@
-"""Proof file."""
-
-AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
