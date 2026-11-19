@@ -66,6 +66,20 @@ def test_unit_measure_flags_a_shifted_market(tmp_path, monkeypatch):
     assert next(iter(summary["latest_psi_by_ticker"])) == "GLD"
 
 
+def test_unit_latest_breakdown_uses_the_same_window_as_the_latest_week(tmp_path, monkeypatch):
+    """The per-ticker PSI is for the window ending on the latest Friday, so its largest value is latest_max_psi.
+
+    The sample data ends on a Wednesday (2025-12-31): the last rows of the file are not the latest week's window.
+    """
+    cfg = _setup(tmp_path, monkeypatch)
+    reference = monitor_report.daily_returns(Path(cfg["paths"]["raw_data"]), cfg)
+    current = monitor_report.daily_returns(Path(cfg["paths"]["inference_data"]), cfg)
+    current["GLD"] = current["GLD"] * 2
+    assert current.index[-1].day_of_week != 4                 # the file does not end on a Friday
+    summary = monitor_report.measure(cfg, reference, current, pd.DataFrame())
+    assert max(summary["latest_psi_by_ticker"].values()) == pytest.approx(summary["latest_max_psi"], abs=1e-4)
+
+
 def test_unit_measure_stops_when_recent_data_is_too_short(tmp_path, monkeypatch):
     cfg = _setup(tmp_path, monkeypatch, inference_days=100)
     reference = monitor_report.daily_returns(Path(cfg["paths"]["raw_data"]), cfg)

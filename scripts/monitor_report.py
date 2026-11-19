@@ -29,7 +29,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from src import clean_data, config, load_data, monitoring, tracking, utils, validate
+from src import (clean_data, config, load_data, monitoring, tracking, utils,
+                 validate)
 from src.logger import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -90,8 +91,9 @@ def measure(cfg: dict, reference: pd.DataFrame, current: pd.DataFrame, answers: 
     if drift.empty:
         raise ValueError(f"monitor_report: the recent data has no Friday with {settings['window_days']} days of "
                          "daily returns. Fetch more days (data.inference_days) or lower monitoring.window_days.")
-    latest = monitoring.feature_drift(train, current.dropna(subset=columns).tail(settings["window_days"]),
-                                      columns, settings["psi_bins"])
+    # The breakdown is for the same window as the latest week (ending on its Friday), not the file's last rows.
+    latest_window = current.dropna(subset=columns).loc[:drift.index[-1]].tail(settings["window_days"])
+    latest = monitoring.feature_drift(train, latest_window, columns, settings["psi_bins"])
     rates = (monitoring.weekly_fallback_rate(answers, settings["date_column"], settings["fallback_column"])
              if not answers.empty else pd.DataFrame(columns=["fallback_rate", "answers"]))
     return {
