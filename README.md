@@ -31,12 +31,12 @@ Move the balanced portfolio's max drawdown from the baseline by a reduction set 
 | ML metric | `max_drawdown_reduction` (higher is better): 1 - agent max drawdown / baseline max drawdown, both as losses, so 0.20 means a 20% smaller worst loss. Quality gate, measured on validation 2020 to 2021 against today's rule | 0 (today's rule) | `>=` 0.20 |
 | Guard | annual net return | To be measured | No more than 0.25 percentage points below baseline |
 | Guard | annual trading cost | To be measured | No more than 2 x baseline |
-| Guard | `tracking_error` to target weights (annualised) | Today's rule: 0.0059 (validation 2020 to 2021) | No more than X = 0.012 (2 x the baseline on 2020 to 2021) |
+| Guard | `tracking_error` to target weights (annualised) | To be measured | No more than X, set from the baseline on 2020 to 2021 |
 | Challenger | `max_drawdown` vs selected simple rule | To be measured | Smaller than the selected rule's |
 
 Stage 2: `main.py` checks only the quality gate (`max_drawdown_reduction >= 0.20` on validation 2020-2021); guards are reported, not gated. The release decision on 2022-2025, including the guards, runs once, in Stage 3.
 
-Do not release if, on 2022 to 2025, any of these holds: max drawdown misses the KPI target; annual net return trails the baseline by more than 0.25 percentage points; annual trading cost exceeds 2 x the baseline's; tracking error exceeds X (0.012); or max drawdown is not smaller than the selected simple rule's. Then recommend the selected simple rule if it passes the gate against the baseline, otherwise keep the current process.
+Do not release if, on 2022 to 2025, any of these holds: max drawdown misses the KPI target; annual net return trails the baseline by more than 0.25 percentage points; annual trading cost exceeds 2 x the baseline's; tracking error exceeds X; or max drawdown is not smaller than the selected simple rule's. Then recommend the selected simple rule if it passes the gate against the baseline, otherwise keep the current process.
 
 Reported, not gated: Sharpe ratio (headline), Sortino ratio, volatility, CVaR (expected shortfall) at 95%, turnover, tracking error. Calmar ratio may be shown for reference.
 
@@ -95,7 +95,7 @@ Scales to (ideas, not findings): the firm's conservative and growth model portfo
 
 ### Open gaps
 1. Baseline max drawdown, return, trading cost and tracking error are To be measured over 2007 to 2021 (feasibility check and challenger selection) and 2022 to 2025, before any model is trained.
-2. Closed (#64): `tracking_error` is the annualised standard deviation of the difference between portfolio and target-portfolio weekly returns (`evaluate.tracking_error`). X = 0.012 in `config.yaml` (`guards.max_tracking_error`): 2 x today's rule on 2020 to 2021 (0.0059), so never rebalancing (0.0127) fails the guard.
+2. Define `tracking_error` in this README and in `config.yaml` (proposed: annualised standard deviation of the difference between portfolio and target-portfolio weekly returns) and set X from the baseline on 2020 to 2021.
 3. Not stated: which weights each action moves toward target (Friday or Monday pre-trade), and which weights the Friday cost estimate uses.
 4. Not stated: starting weights on the first decision date and at the start of 2022, and the scope of the "every day in exactly one window" test.
 5. `config.yaml` needs fixed meanings for: "±5%" and "±2.5" (percentage points proposed), the quarterly date, daily weights for the persistent rule, simple or compounded weekly reward, the drawdown penalty reference, and a minimum trade size (Finizens uses one).
@@ -105,9 +105,53 @@ Scales to (ideas, not findings): the firm's conservative and growth model portfo
 9. "Wide drift band" as the cause is a hypothesis. The band research is not done.
 10. The snapshot owner is named (Ricardo Arciniegas). The personal-use claim comes from yfinance's documentation, not from Yahoo's own terms. Still open: name who read Yahoo's terms, with the date.
 11. Check the `yfinance` notes for the pinned version (the cited pages were for older versions), confirm the tickers. Confirmed: all five ETFs have Yahoo data from 2007-05-30 (BIL is the latest). Verified by the snapshot download on 11 Nov 2026: 4,679 trading days per ticker, no gaps, no missing values.
-12. Closed (#119): the drift alert fires when the population stability index (PSI) of the daily returns of SPY, EFA, IEF or GLD over the last 180 trading days, against the train years, is above 0.2 (`monitoring.psi_limit`, computed by `src/monitoring.py`; see "Monitoring"). Still open: the €0.01 cost limit is compute only, and the scaling claims are ideas.
+12. The drift monitor alert limit has no number. The €0.01 cost limit is compute only. The scaling claims are ideas.
 13. Challengers check weekly, whereas Indexa monitors daily. The project name is not chosen.
 14. The label is only ever 0.0 (about 55% of decisions) or 1.0 (about 45%), never 0.5, because the reward is nearly linear in the action. Decide whether to keep three actions.
+
+### Stage 3 update
+Added in Stage 3. The business case above is unchanged, as submitted. This part says what the live service changes for the desk, what it costs to run, and what became of each commitment. Results come from one run of `python -m src.main` on the official snapshot before the v1.1.0 release (`dev` at `cc40b45` plus #125), with the shipped settings; the RL agent and the grid search are reported from the same run with `rl.enabled` and `selection.enabled` switched on. Validation is 2020 to 2021.
+
+**What changes for the desk.** Before, the Friday batch wrote a CSV. Now the portfolio manager sends their positions (ticker and market value), the portfolio's drawdown, the weeks since the last rebalance and recent prices to a web address. They get back the recommendation (0.0, 0.5 or 1.0), a proposed portfolio, a trades list and one plain sentence saying why. They make two choices, in their own words: the **target weights** (their own policy mix, or a calculated one: minimum variance, maximum Sharpe, mean-variance or risk parity) and the **rebalancing method** (smart, where our model decides; calendar; tolerance band; or calendar and band). The review frequency (daily, weekly or monthly) is a setting, weekly by default. The portfolio manager still approves every trade.
+
+**What it changes in the decisions today: nothing.** No model has passed the gate, so the service answers with today's rule (quarterly, plus the 5-point drift check) and says so in its reply. The desk gets the same answer as before, with a ready trades list instead of a CSV.
+
+**Cost of running it.** GitHub Actions on GitHub-hosted runners (the repository is public), a Weights & Biases team account for tracking and the model registry, the GitHub container registry for the image, and a self-hosted always-on machine behind a Cloudflare tunnel for the service. No paid component is used. The estimate in "Value, cost and risks" (under €50 per month for infrastructure) is unchanged. Time per request, measured locally in rule-only mode: 41 ms, with about 190 MB of memory, against the limits above (under 60 s and under €0.01 per decision); the latency on the host: PENDING, measured at the v1.1.0 release.
+
+**What became of each commitment** (status on 18 Nov 2026):
+
+| Commitment in this section | Where it lives | Result |
+| --- | --- | --- |
+| Quality gate, `max_drawdown_reduction >= 0.20` on validation 2020 to 2021 | `evaluate.check_gate`, run by `main.py` | Stage 2 classifier: -0.047 (-19.6% against -18.7%). **Not met.** Nothing is saved or shipped |
+| Reinforcement learning agent through the same gate, median of 5 seeds | `rl_agent.py`, run by `main.py` (#102) | Median of 5 seeds: +0.019 (seeds 0.019, 0.019, 0.019, 0.024, 0.019). **Not met.** The 60% fallback would hand the decision to today's rule on 22% of validation weeks |
+| Simple-rule challengers: current rule, bands of 2.5 and 1.5 points, persistent drift, asymmetric rule, matched-exposure mix; the best is selected on validation | `rules.py`, reported by `main.py` | Persistent drift selected: -18.40% max drawdown and 14.34% annual return against today's rule's -18.74% and 13.72%. The two bands and matched exposure fail the return guard |
+| Traditional benchmarks (mean-variance, maximum Sharpe, minimum variance, risk parity), reported and never gated | `benchmarks.py`, reported by `main.py` | Fitted on the train years. Minimum variance 99% BIL (max drawdown -0.1%), risk parity 85% BIL (-1.3%), maximum Sharpe over cash 23% SPY, 72% IEF, 5% GLD (-7.3%), mean-variance 50% SPY, 28% IEF, 22% GLD (-16.6%). Mean-variance changes the mix rather than timing it, so it is not comparable with the gate. The Sharpe ratios (1.17 to 1.42) have no risk-free rate subtracted, which flatters the cash-heavy portfolios |
+| Guards: annual net return, annual trading cost, tracking error | `evaluate.guard_report`, reported by `main.py` | The tracking-error limit is 0.012, twice today's rule (0.0059). Classifier: return shortfall 0.0063 against a limit of 0.0025 (**failed**), cost ratio 1.12 against 2.0 (passed), tracking error 0.0025 against 0.012 (passed) |
+| Release decision on 2022 to 2025, run once | `evaluate.release_decision`, the test audit in `main.py` | **Not run:** no model passed the gate, so the test years stay sealed |
+| Robustness checks: Holm correction, cost sensitivity, the largest drawdown episode removed | `robustness.py`, reported by `main.py` | Feasibility ceiling: a perfect-hindsight agent on 2007 to 2021 reduces max drawdown by only 0.0044, so **the 0.20 gate cannot be reached with these three actions**. Cost sensitivity (classifier): -0.047 with flat costs, -0.047 with realistic costs. One version scored on validation with the shipped settings (six with the RL seeds). Holm correction and episode removal run only in the test audit, which stays sealed |
+| Walk-forward check and a small grid search on the train years, every try logged | `selection.py`; `selection` in `config.yaml` (off by default) | Seven yearly blocks 2013 to 2019 (table below): median -0.0013. Grid of six trials: best C = 1 without class weights (median -0.0010), -0.031 on validation, gate not met. Review frequency net of costs: daily -0.0094, weekly -0.0010, monthly +0.0015 |
+| Drift monitor alert | `monitoring.py`, `scripts/monitor_report.py` (#122) | Largest PSI of SPY, EFA, IEF and GLD daily returns (last 180 days against the train years) above 0.2. On the official snapshot it fires for the week of 26 Dec 2025 (EFA 0.254) |
+| 12 months of shadow operation | operation at the firm | **Not done.** It needs a year of running alongside the current process, which is outside the course |
+| Optional market-stress input (VIX) | none | **Not built** |
+
+**What became of each open gap** (status on 18 Nov 2026, checked against `dev`). The list above is the submitted text and is not edited.
+
+| Gap | Status |
+| --- | --- |
+| 1. Baseline measures | **Closed.** Today's rule on 2020 to 2021: max drawdown -18.74%, annual return 13.72%, volatility 13.81%, Sharpe 0.99, trading cost 0.025% a year, tracking error 0.0059 |
+| 2. Tracking error | **Closed** (#64): the annualised standard deviation of the difference between portfolio and target-portfolio weekly returns (`evaluate.tracking_error`); X = 0.012 (`guards.max_tracking_error`), twice today's rule on 2020 to 2021 (0.0059) |
+| 3. Which weights the actions and costs use | Decision timing **closed**: the state uses the pre-trade Friday weights, and the trade happens at the next trading day's close (`docs/MODULE_SPECS.md`, portfolio). The weights behind the cost estimate are not restated there |
+| 4. Starting weights | The simulation starts at target weights on the first decision date (2007-09-07). The start of 2022 and the "every day in one window" test are not checked here |
+| 5. Meanings in `config.yaml` | Mostly **closed**: "±5%" is `drift_band: 0.05` in absolute points, the quarterly date is the first Friday of January, April, July and October, `penalty_lambda` is 1.0, `min_trade` is 0.0. Not restated: daily weights for the persistent rule and simple or compounded reward |
+| 6. "Confidence" | **Open**, stated as a known limit in the model card |
+| 7. Feasibility ceiling | **Closed** (#101): perfect hindsight on 2007 to 2021 reduces max drawdown by 0.0044, far below the 0.20 gate. That window differs from validation, so it is not directly comparable with the validation results |
+| 8. Evidence limits | **Open**, stated as a known limit in the model card |
+| 9. Wide drift band as the cause | **Open**: the band research is not done |
+| 10. Yahoo's terms | **Open**: the snapshot owner is named, who read the terms and when is not |
+| 11. `yfinance` and tickers | Tickers and data **confirmed** on 11 Nov. The notes for the pinned `yfinance` version are not rechecked |
+| 12. Drift alert limit | **Closed** (#122): PSI above 0.2, see Monitoring |
+| 13. Daily or weekly challengers; project name | **Open** |
+| 14. Three actions or two | **Answered:** on the train years (643 weeks) the best action is no trade 55.4% and full rebalance 44.6%; the half step is never best (0.0%). Validation (104 weeks): 51.0% / 49.0% / 0.0% |
 
 ---
 
@@ -118,20 +162,97 @@ Weekly rebalancing advice for a balanced 5-ETF portfolio (SPY, EFA, IEF, GLD, BI
 
 The Stage 2 quality gate is `max_drawdown_reduction >= 0.20` on validation (2020 to 2021). On the current data the gate is not met (see section 1).
 
+## Model card
+
+### Purpose and users
+At each review (weekly by default) the model recommends one of three actions for the balanced 5-ETF portfolio: leave it (0.0), rebalance halfway back to target (0.5) or rebalance fully (1.0). Portfolio managers decide and approve every trade. The quant analyst runs the weekly batch and watches the model. The Investment Committee approves large changes. These roles are assumptions of the business case.
+
+The model only decides *when and how much* to return to targets that the fund sets. It does not choose the targets or the assets, and it is not tactical allocation. It is not meant for other tickers or portfolios, for use without human approval, or for real money: the client is hypothetical.
+
+### Data
+| Item | Value |
+| --- | --- |
+| Source | Yahoo Finance daily prices (close and volume) for SPY, EFA, IEF, GLD and BIL, through `yfinance`. The yfinance documentation says the Yahoo Finance API is for personal use only, so a real firm would need a licensed source |
+| Snapshot | 4,679 trading days per ticker, 2007-05-30 to 2025-12-31, downloaded on 11 Nov 2026. Shared directly with the team, never committed to Git |
+| Raw file checksum | `data/raw/prices.csv`: SHA-256 `3cce101c20eb1bcd5f453176affaa3c7f4a3f470a89973de47617134d6705526` |
+| Inference file checksum | `data/inference/prices_latest.csv`, the last 300 trading days of the same snapshot (2024-10-21 to 2025-12-31): SHA-256 `b5adf3d40afbf760afcb1527c07821064099a7587573b67a8d5ee3f02515e0f3` |
+| Split | By date. Train 2007-09-07 to 2019-12-31 (includes the 2008 crash), validation 2020 to 2021, test 2022 to 2025 (sealed: read once, at the release decision) |
+| Checks on every run | All five tickers present, the same dates for every ticker, close above 0, no missing values, no daily move above 25%. Any failure stops the run |
+
+A new download gives slightly different prices and so a different checksum. Use the shared file and do not re-run `scripts/fetch_prices.py` unless you mean to make a new snapshot.
+
+### Model and features
+- **Default model** (`model.type: classifier`): a multinomial logistic regression with balanced class weights and a fixed seed (42). It is fast, repeatable and easy to explain to a portfolio manager. Balanced weights stop it defaulting to the most common action.
+- **Challenger** (`model.type: fitted_q`): a reinforcement learning agent (fitted Q iteration, scikit-learn only). It is meant to go through the same gate as the classifier. `main.py` runs it when `model.type` is `fitted_q`, or reports it next to the classifier when `rl.enabled` is true (#102). The shipped setting is `classifier`.
+- **Inputs**, all known at the close of the review day: for each ETF the current weight and its drift from target, plus the 4-week and 12-week return and the 20-day volatility; for the portfolio the drop since its last high, the weeks since the last rebalance and the estimated cost of a full rebalance.
+- **What it learns**: the action with the best reward for the coming window. Reward = the window's portfolio return, minus 0.1% of the value traded, minus a penalty for new drops below the previous high.
+- **Fallback**: if the model's probability for its preferred action is below 60%, or an input is missing, today's rule applies instead.
+
+### The gate and the honest result
+A model is only saved, registered and served if `max_drawdown_reduction >= 0.20` on validation (2020 to 2021). That is a worst loss at least 20% smaller than today's rule (quarterly rebalance plus a 5-point drift check).
+
+| | Max drawdown, validation 2020 to 2021 |
+| --- | --- |
+| Today's rule | -18.7% |
+| Stage 2 classifier | -19.6% |
+| `max_drawdown_reduction` | **-0.047, gate NOT met** (needs 0.20 or more) |
+
+So the Stage 2 classifier is not saved, not registered and not shipped. Until a model passes, the live service answers with today's rule and says so in its reply. We report this result as it is and do not tune the model on the validation years until it passes. Stage 3 adds the reinforcement learning agent, simple-rule challengers and benchmark portfolios, and a release decision on 2022 to 2025 that runs once.
+
+### Walk-forward results per year
+Train years only, shipped settings; each year scored by a model trained on the years before it.
+
+| Year | Today's rule max drawdown | Model max drawdown | `max_drawdown_reduction` |
+| --- | --- | --- | --- |
+| 2013 | -6.11% | -6.07% | 0.0058 |
+| 2014 | -4.50% | -4.54% | -0.0092 |
+| 2015 | -7.63% | -7.49% | 0.0193 |
+| 2016 | -3.38% | -3.41% | -0.0079 |
+| 2017 | -1.42% | -1.42% | -0.0001 |
+| 2018 | -10.60% | -10.96% | -0.0334 |
+| 2019 | -2.68% | -2.69% | -0.0013 |
+| Median | | | -0.0013 |
+
+### Known limits
+- **Little evidence.** Validation contains the COVID crash, one stress episode, and there are only about 950 weekly decisions in total (estimate).
+- **Flat costs.** Trading costs are a flat 0.1% of the value traded. Commission, slippage and market impact are a sensitivity check, not the default.
+- **The half step never wins.** On the train years the best action is no trade 55.4% and full rebalance 44.6% of the time, and the half step 0.0%; on validation 51.0%, 49.0% and 0.0%.
+- **"Confidence" is a probability**, the model's probability for its preferred action. It is not a calibrated confidence.
+- **Narrow scope.** Five ETFs, long only, fixed target weights. Positions in any other ticker are rejected.
+- **Hypothetical client, public prices.** Nothing here has been tested with real money or real client data.
+- **Small trades.** `portfolio.min_trade` is 0.0 today, so every trade is kept and buys and sells net to zero. If it is raised, trades below it are dropped and the remaining buys and sells may no longer net exactly to zero.
+- **Validation is not the release decision.** A model that passes the gate can still fail the guards on 2022 to 2025 (return, cost, tracking error, the best simple rule).
+
+### What triggers a retrain
+One list, used by the monitoring (section "Monitoring") and by the people who run the service. Retrain, and run the quality gate again, when any of these happens:
+- **Monitoring:** the fallback rate is above 50% for 4 weeks in a row (the model is rarely confident enough to override today's rule), measured from the predictions the API logs to Weights & Biases; or the drawdown reduction against today's rule is below 0 over a quarter (the model does worse than the rule it replaces), measured from the realised portfolio values in the monthly review. The API logs no portfolio values, so it cannot measure this one.
+- **Data:** a new price snapshot is adopted (a new checksum), or the weekly data check fails.
+- **Inputs:** the input drift alert fires. Proposed: it has no numeric limit yet (open gap 12 in section 1).
+- **Use:** the monthly review shows the portfolio managers overriding the recommendation much more than they follow it.
+- **Settings:** the target weights or the rebalancing method change, because the labels depend on them.
+
+A retrained model must pass the gate again before it takes the `prod` alias. If a new version performs worse, roll back to the previous approved version, or to today's rule when there is none.
+
+### Who owns it
+At the firm: the quant analyst runs and monitors it, portfolio managers decide, IT keeps the infrastructure running. In this project: the module owners in the table at the end of this file. Ricardo Arciniegas owns the data snapshot and Miguel Palanca owns the release.
+
 ## Install
 ```bash
 conda env create -f environment.yml
 conda activate mlops-group2
 ```
+This works on macOS, Windows and Linux. CI, Docker and the live service use the exact versions in `conda-lock.yml`. That file is made for Linux only (`linux-64`), so on a Mac or a Windows PC use the command above, or run the Docker image below. On Linux: `conda-lock install -n mlops-group2 conda-lock.yml`.
 
 ## Get the data
 The pipeline never downloads data. Use the `prices.csv` that Ricardo shares with the team. It is not in Git, because Yahoo's API is for personal use only.
 
 1. Create the folders (Git does not keep empty folders): `mkdir -p data/raw data/inference` (Windows: `mkdir data\raw data\inference`). Put the file at `data/raw/prices.csv`.
-2. Check its SHA-256 against the one in `TEAM_BRIEF.md`. On Windows: `certutil -hashfile data\raw\prices.csv SHA256`. On Mac or Linux: `shasum -a 256 data/raw/prices.csv`.
-3. The run also reads `data/inference/prices_latest.csv`, the last 300 trading days of the same snapshot. Ask Ricardo for it too.
+2. Check its SHA-256 against the Data table in the Model card above. On Windows: `certutil -hashfile data\raw\prices.csv SHA256`. On Mac or Linux: `shasum -a 256 data/raw/prices.csv`.
+3. The run also reads `data/inference/prices_latest.csv`, the last 300 trading days of the same snapshot. Ask Ricardo for it too, and check its SHA-256 in the same table.
 
 Run `python scripts/fetch_prices.py` only to make a new snapshot. Downloads differ over time, so a new file has a different checksum and gives different results.
+
+No access to the snapshot? Make sample data instead: `python -m scripts.make_sample_prices`. The prices are random, every run logs that they are SYNTHETIC, and CI uses them. The script refuses to overwrite a file that already exists unless you pass `--force`, so it cannot replace the real snapshot by accident. Results on sample data mean nothing.
 
 ## Run
 ```bash
@@ -144,15 +265,65 @@ One command runs every step and writes these files. Git ignores them.
 | `data/processed/clean.csv` | cleaned prices |
 | `models/model.joblib` | the fitted model |
 | `reports/predictions.csv` | one recommendation per decision date, with a fallback flag |
-| `reports/metrics.json` | validation scores, model against today's rule, and the gate result |
+| `reports/challengers.csv` | one row per simple rule over the validation years: max drawdown, return, cost, tracking error and guard results |
+| `reports/benchmarks.csv` | the four traditional portfolios over the validation years: weights, max drawdown, return, volatility, Sharpe, cost (reported, never gated) |
+| `reports/metrics.json` | validation scores, model against today's rule, the gate result, the guards, the chosen challenger and the benchmarks |
 | `reports/selection.csv` | parameter trials and median training-period walk-forward scores when `selection.enabled` is true |
-| `reports/robustness.json` | historical hindsight diagnostic, validation under flat and realistic costs, number of evaluated candidates, and test-audit status |
+| `reports/frequency_comparison.csv` | daily, weekly and monthly review compared on the train years, net of costs, when `selection.enabled` is true |
+| `reports/robustness.json` | historical hindsight diagnostic, validation under flat and realistic costs, number of versions scored on validation, and test-audit status |
+| `reports/proposed_portfolio.csv`, `reports/trades.csv` | only when `data/inference/positions.csv` exists: the recommendation for that book, its proposed portfolio and the trades |
 
 The robustness report records episode exclusion and Holm-adjusted challenger comparisons when the model passes the validation gate and reaches the test audit. Otherwise the report marks the test period as sealed. With W&B tracking active, the run also logs a robustness table.
 
 The log (`logs/pipeline.log`) says "Quality gate met" or "NOT met". If the data or config is wrong, the run stops with exit code 1 and says what to fix.
 
 The predictions use the inference file, which ends in 2025. They are a demo of the output, not out-of-sample evidence.
+
+## Serve the API
+The service has two endpoints: `GET /health` (is it up, which model and release) and `POST /predict` (a portfolio's positions and recent prices in; a recommendation, the reason, a proposed portfolio and a trades list out).
+
+```bash
+cp .env.example .env     # first time only (Windows: copy .env.example .env)
+uvicorn src.api:app      # from the repository root, with mlops-group2 active
+```
+Then open `http://127.0.0.1:8000/docs` for the interactive page, where you can try both endpoints.
+
+**Settings** live in `.env` and never go in Git. Running locally needs no key.
+
+| Name | Meaning |
+| --- | --- |
+| `MODEL_SOURCE` | `local` reads `models/model.joblib`; `wandb` downloads the model with the alias `prod` |
+| `WANDB_MODE` | `online`, `offline` or `disabled` |
+| `WANDB_API_KEY` | your **own** key, only for `wandb` or `online` (team `ie-mbds-group-2`, ask Miguel for an invite) |
+| `WANDB_ENTITY`, `WANDB_MODEL_ALIAS`, `APP_VERSION` | the W&B team, the model alias (`prod`) and the release name shown by `/health` |
+| `RENDER_GIT_COMMIT` | the deployed commit, shown by `/health` as `commit`. The release image has it baked in (the name is kept from the first hosting plan); leave it as `local` on your machine |
+
+**No model yet?** No model has passed the gate, so none is saved. The service still starts and answers with today's rule, with `fallback: true` and the reason in plain words.
+
+**Call it with `curl`**, using the sample request (`scripts/sample_request.json`, built from sample prices):
+```bash
+curl -s http://127.0.0.1:8000/health
+curl -s -X POST http://127.0.0.1:8000/predict -H "Content-Type: application/json" -d @scripts/sample_request.json
+```
+
+| You send (`/predict`) | |
+| --- | --- |
+| `as_of` | the review date |
+| `positions` | a list of `{ticker, market_value}`; only the configured tickers, values 0 or more, total above 0 |
+| `drawdown` | 0 at the portfolio's peak, negative below it |
+| `weeks_since_rebalance` | reviews since the last rebalance, 0 or more |
+| `prices` | at least 61 trading days of the five ETFs (`api.min_history_days`) |
+| `target_method`, `rebalancing_method`, `portfolio_id` | optional; the defaults are the policy mix and our model (`config.yaml`) |
+
+You get back `recommendation` (0.0, 0.5 or 1.0), `fallback` (true when today's rule decided), `reason`, `proposed_portfolio` (ticker, weight, value), `trades` (ticker, side, value, weight before and after) and `model_version`. A field that breaks the request gives HTTP 422 with the allowed values. Data the pipeline cannot use gives HTTP 400 with the pipeline's own message. Prices and positions are never logged.
+
+Check a running service end to end (works on a local run, a Docker run or the live URL):
+```bash
+python scripts/smoke_test.py --url http://127.0.0.1:8000
+```
+It exits with 0 when `/health` is ok and `/predict` answers the sample request.
+
+**Live service:** https://etf-api.mpholdings.co (`/health`, `/predict`, `/docs`). Runs, data versions and models are in Weights & Biases: `https://wandb.ai/ie-mbds-group-2/etf-rebalancing`.
 
 ## Test
 ```bash
@@ -169,8 +340,8 @@ docker run --rm -p 8000:8000 -e MODEL_SOURCE=local etf-advisor
 ```
 Then open `http://localhost:8000/health` (or `/docs`). Stop it with Ctrl+C.
 
-- **Contents:** only `config.yaml`, `conda-lock.yml` and `src/` (`.dockerignore` is an allow-list). `.env`, `data/`, `models/` and `tests/` never enter the image. Pass settings as environment variables (`-e NAME=value`), as Render does.
-- **Platform:** the image is built for `linux/amd64`, the platform the lock file and Render use. On an Apple Silicon Mac Docker emulates it, which is slower but gives the same result.
+- **Contents:** only `config.yaml`, `conda-lock.yml` and `src/` (`.dockerignore` is an allow-list). `.env`, `data/`, `models/` and `tests/` never enter the image. Pass settings as environment variables (`-e NAME=value`), as the host does.
+- **Platform:** the image is built for `linux/amd64`, the platform the lock file and the host use. On an Apple Silicon Mac Docker emulates it, which is slower but gives the same result.
 - **Size:** about 1.5 GB (the scientific stack, W&B, and the dev tools that share the lock file).
 - **Changing packages:** edit `environment.yml`, then run `conda-lock -f environment.yml -p linux-64` and commit both files.
 
@@ -182,8 +353,21 @@ The live service sends its answers to Weights & Biases so the team can see when 
 - **Never breaks serving:** with `WANDB_MODE=disabled` or `tracking.enabled: false` nothing is kept or sent. If W&B cannot be reached, at start-up or later, the error is logged and the request still gets its answer.
 - **Weekly monitoring run:** `python -m scripts.monitor_report`, once a week after Friday's close. It writes `reports/monitoring.json` and, with tracking on, logs a W&B run of job type `monitor` with two charts, each with its retrain limit drawn in: the fallback rate per week (from the `serve/predictions` tables) and the input drift per week. W&B view: [etf-rebalancing project](https://wandb.ai/ie-mbds-group-2/etf-rebalancing), runs of job type `monitor`. With W&B off, pass `--answers <csv>` (columns `as_of`, `fallback`) to measure the fallback rate from a file.
 - Monitoring view in Weights & Biases: https://wandb.ai/ie-mbds-group-2/etf-rebalancing/runs/f80resps (weekly drift PSI and fallback rate, with the retrain limits drawn in).
-- **Drift measure and limit:** the population stability index (PSI) of the daily returns of SPY, EFA, IEF and GLD, comparing the last 180 trading days of the inference data with the train years (2007-09-07 to 2019-12-31), in 10 bins cut at the train years' deciles. The weekly number is the largest PSI over the four tickers; the alert fires above 0.2. Why PSI and 0.2: it is the standard drift measure in credit scoring, read as below 0.1 stable, 0.1 to 0.2 watch, above 0.2 a real shift. Why daily returns: every market feature is built from them, and they are close to independent from day to day. The 4- and 12-week returns and the 20-day volatility overlap, so their PSI stays far above 0.2 even when nothing has changed (on the synthetic prices, it fired in every week tested, with a median of 3.5 over 120 days). Why 180 days: noise alone gives a PSI near (10 - 1) / 180 = 0.05; on the synthetic prices (three seeds) it never fired with no change, and it caught daily moves 1.5 times larger after 90 to 110 trading days. Why not BIL: its daily return is the T-bill rate, near 0 in most train years and about 5% since 2022, so it would keep the alert on permanently. Settings: `monitoring` in `config.yaml`. Not yet checked on the real snapshot.
+- **Drift measure and limit:** the population stability index (PSI) of the daily returns of SPY, EFA, IEF and GLD, comparing the last 180 trading days of the inference data with the train years (2007-09-07 to 2019-12-31), in 10 bins cut at the train years' deciles. The weekly number is the largest PSI over the four tickers; the alert fires above 0.2. Why PSI and 0.2: it is the standard drift measure in credit scoring, read as below 0.1 stable, 0.1 to 0.2 watch, above 0.2 a real shift. Why daily returns: every market feature is built from them, and they are close to independent from day to day. The 4- and 12-week returns and the 20-day volatility overlap, so their PSI stays far above 0.2 even when nothing has changed (on the synthetic prices, it fired in every week tested, with a median of 3.5 over 120 days). Why 180 days: noise alone gives a PSI near (10 - 1) / 180 = 0.05; on the synthetic prices (three seeds) it never fired with no change, and it caught daily moves 1.5 times larger after 90 to 110 trading days. Why not BIL: its daily return is the T-bill rate, near 0 in most train years and about 5% since 2022, so it would keep the alert on permanently. Settings: `monitoring` in `config.yaml`. On the official snapshot the alert fires for the week of 26 Dec 2025 (EFA daily returns, PSI 0.254).
 - **Retrain triggers:** the full list is in one place, "What triggers a retrain" in the model card. This monitoring measures two of them: the fallback rate (above 50% for 4 weeks in a row) and the input drift (largest daily-return PSI above 0.2 in the latest week). The live drawdown reduction against today's rule (below 0 over a quarter) needs realised portfolio values, which the API does not log; it is checked in the monthly review.
+
+## Future work
+Five ideas, in the order I would take them. Each says what it is, why it is not done now and the first step.
+
+**Any universe, or a whole book.** *What:* accept any tickers, or a whole book of holdings, not only the five ETFs. *Why not now:* the model's inputs are per ticker (`w_SPY`, `drift_SPY`, `ret_4w_SPY` and so on), so its input has a fixed length and fixed column names. A model trained on these five cannot take a sixth ETF or a different one, and `data.tickers`, the target weights and the label would all change with the list. The asset-agnostic design removes this: describe each holding by features that do not carry its name (its own weight, drift, 4-week and 12-week return and volatility), add a few portfolio-level features (largest drift, drawdown, weeks since the last rebalance), and train one shared model on many assets. *First step:* write the feature table for this design on the same five ETFs, train it, and check that it reproduces the current gate result before any new ticker is added.
+
+**Continuous training.** *What:* retrain on new data on a schedule and replace the served model only when the new one passes the gate. *Why not now:* there is one frozen snapshot, Yahoo's data is for personal use only so a firm needs a licensed feed, and no model has passed the gate yet, so there is nothing to replace. *First step:* with a licensed feed in place, add a scheduled workflow that fetches and validates new prices, trains, runs the gate and registers the model in Weights & Biases. The `prod` alias must stay on the previous version when the gate fails.
+
+**Rolling target weights.** *What:* when the target weights are calculated (minimum variance, maximum Sharpe, mean-variance, risk parity), refit them on a moving window at each review instead of once. *Why not now:* today they are fitted once on the train years only, which keeps the test years sealed. A rolling fit must use only data known at each review date or it leaks the future, and because the labels depend on the target, every change of target means a retrain. *First step:* refit on the trailing years inside the walk-forward check, and report how much the targets move from one review to the next.
+
+**A stronger agent.** *What:* a richer reinforcement learning agent, for example more than three actions or a better reward. *Why not now:* there are only about 950 weekly decisions, the half step is never the best action (0% of the train weeks, gap 14), and even perfect foresight with these three actions reduces drawdown by only 0.0044 (gap 7), so a bigger model on the same actions has little to gain. *First step:* change the action set first, for example rebalancing back to the edge of the tolerance band instead of halfway, and rerun the feasibility check before training anything larger.
+
+**Named portfolios.** *What:* several model portfolios, such as conservative, balanced and growth, each with its own targets, thresholds and gate. *Why not now:* each one needs its own target weights, labels, model and gate result, and the `prod` alias holds one model. The API request already has an optional `portfolio_id`, but nothing uses it to choose a model yet. *First step:* make a second configuration (target weights and gate) for one more portfolio, run the pipeline for it, and give its model its own alias.
 
 ## Repo structure
 ```text
