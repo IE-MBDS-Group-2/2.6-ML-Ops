@@ -40,7 +40,7 @@ dependencies:
   - black
   - isort
   - conda-lock          # writes conda-lock.yml for CI and Docker (stage 3)
-  - virtualenv=21.15.6   # TEMPORARY (17 Nov): conda-forge 404 on 21.15.7; same version as conda-lock.yml. Remove before the release check
+  - virtualenv=21.15.6   # pinned to the version in conda-lock.yml (conda-forge 404 on 21.15.7, 17 Nov); kept on purpose
   - pip
   - pip:
       - detect-secrets
