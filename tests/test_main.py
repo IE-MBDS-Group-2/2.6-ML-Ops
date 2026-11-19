@@ -297,7 +297,7 @@ def test_integration_grid_search_reports_trials(tmp_path: Path, monkeypatch) -> 
     assert trials["C"].tolist() == [.1, 1.]
     assert len([call for call in logs if call[1]["prefix"] == "grid/"]) == len(trials)
     report = json.loads((tmp_path / cfg["paths"]["robustness"]).read_text(encoding="utf-8"))
-    assert report["versions_tried"] == len(trials)
+    assert report["versions_tried"] == 1          # grid trials are scored on the train years, not on validation
     assert report["test"]["status"] == "sealed"
     assert cfg["model"]["params"] == config.load_config()["model"]["params"]
     comparison = pd.read_csv(tmp_path / cfg["paths"]["frequency_comparison"])
@@ -451,8 +451,9 @@ def test_unit_trades_are_written_only_when_a_positions_file_exists(tmp_path, mon
     assert signed.sum() == pytest.approx(0.0, abs=1e-6)
 
 
-def test_unit_versions_tried_counts_grid_trials_and_rl_seeds():
+def test_unit_versions_tried_counts_only_versions_scored_on_validation():
+    # Grid-search trials are scored on the train years (walk-forward), so they never count.
     cfg = {"model": {"type": "classifier"}, "rl": {"seeds": [0, 1, 2]}}
-    assert main._versions_tried(cfg, 6, {}) == 6
-    assert main._versions_tried(cfg, 6, {"rl": {}}) == 9                  # classifier plus the reported agent
-    assert main._versions_tried({**cfg, "model": {"type": "fitted_q"}}, 6, {"rl": {}}) == 3
+    assert main._versions_tried(cfg, {}) == 1
+    assert main._versions_tried(cfg, {"rl": {}}) == 4                     # classifier plus the reported agent
+    assert main._versions_tried({**cfg, "model": {"type": "fitted_q"}}, {"rl": {}}) == 3
