@@ -1,0 +1,96 @@
+# retrain.yml  [Monthly and manual retraining on the self-hosted runner]
+# -------------------------------------------------------------------
+# Purpose   Run the full pipeline (python -m src.main) on the official price snapshot. W&B gets the run, the
+#           dataset artifact, the metrics and the gate result. A model is registered only when the quality gate
+#           passes (D8). This workflow never moves the "prod" alias: a person does that in W&B.
+# Trigger   workflow_dispatch (Actions > retrain > Run workflow) and a monthly schedule. Nothing else: no
+#           pull_request, pull_request_target or push, so no one can run code on the runner from a pull request.
+# Runner    Repository-level self-hosted runner with the label "retrain". It wipes its home after every job, so
+#           the environment is built fresh each run. The price snapshot is read from the runner (ETF_PRICES_CSV),
+#           checked against the checksum in README.md, and never committed.
+# Secrets   WANDB_API_KEY lives only in the "retrain" environment. Nothing here prints the environment or
+#           turns on shell tracing, so the key does not reach the log.
+# Runbook   docs/RETRAIN.md
+# Note      GitHub only lets you run a workflow by hand once its file is on the default branch (main), so the
+#           first manual run comes after the release that brings this file to main.
+
+name: retrain
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 1 * *"   # 03:17 UTC on the 1st of every month
+
+permissions:
+  contents: read
+
+# One retrain at a time; a second one waits instead of cancelling a run halfway.
+concurrency:
+  group: retrain
+  cancel-in-progress: false
+
+jobs:
+  retrain:
+    runs-on: [self-hosted, retrain]
+    environment: retrain
+    timeout-minutes: 120
+    env:
+      WANDB_MODE: online
+      WANDB_ENTITY: ie-mbds-group-2
+      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+      # sha256 of data/raw/prices.csv, the value in README.md (Model card, Data)
+      PRICES_SHA256: 3cce101c20eb1bcd5f453176affaa3c7f4a3f470a89973de47617134d6705526
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build the environment from conda-lock.yml
+        run: micromamba create -y -n etf -f conda-lock.yml
+
+      - name: Copy the price snapshot and check its checksum
+        run: |
+          if [ -z "${ETF_PRICES_CSV:-}" ] || [ ! -f "$ETF_PRICES_CSV" ]; then
+            echo "::error::ETF_PRICES_CSV is not set or the file is missing on this runner"
+            exit 1
+          fi
+          mkdir -p data/raw
+          cp "$ETF_PRICES_CSV" data/raw/prices.csv
+          actual="$(sha256sum data/raw/prices.csv | cut -d' ' -f1)"
+          if [ "$actual" != "$PRICES_SHA256" ]; then
+            echo "::error::data/raw/prices.csv has sha256 $actual, expected $PRICES_SHA256 (the value in README.md). Not the official snapshot: stopping."
+            exit 1
+          fi
+          echo "Snapshot checksum matches README.md"
+
+      - name: Run the pipeline
+        run: |
+          mkdir -p "$RUNNER_TEMP/retrain"
+          micromamba run -n etf python -m src.main 2>&1 | tee "$RUNNER_TEMP/retrain/run.log"
+
+      - name: Write the gate result to the job summary
+        if: always()
+        run: |
+          {
+            echo "## Retrain result"
+            if [ -f reports/metrics.json ]; then
+              micromamba run -n etf python -c "
+          import json
+          m = json.load(open('reports/metrics.json'))
+          g = m['gate']
+          met = 'passed' if g['met'] else 'failed'
+          print(f'- Gate: **{met}** (met: {g[\"met\"]}, threshold: {g[\"threshold\"]})')
+          print(f'- Release decision: {m[\"release\"][\"release\"]}')
+          for reason in m['release']['reasons']:
+              print(f'  - {reason}')
+          " || echo "- reports/metrics.json could not be read"
+            else
+              echo "- No reports/metrics.json: the run stopped before the gate"
+            fi
+            url="$(grep -ohE 'https://wandb\.ai/[^ ]+' "$RUNNER_TEMP/retrain/run.log" 2>/dev/null | tail -n 1 || true)"
+            if [ -n "$url" ]; then echo "- W&B run: $url"; else echo "- W&B run URL: not in the log"; fi
+            echo "- \`prod\` is not moved by this workflow: a person promotes the model in W&B."
+          } >> "$GITHUB_STEP_SUMMARY"
