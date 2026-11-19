@@ -74,6 +74,19 @@ def _model_policy(model: Pipeline, columns: list[str]) -> Callable[[pd.Series], 
     return policy
 
 
+def _policy_metrics(policy: Callable[[pd.Series], float], market_data: tuple, target_weights: pd.Series,
+                    period: tuple[str, str], cfg: dict) -> dict:
+    """Simulate one policy over one scoring window and measure it.
+
+    Inputs: Policy, market frames, target weights, (start, end) as YYYY-MM-DD and configuration.
+    Outputs: evaluate.portfolio_metrics of the simulated values (net of trading costs).
+    Why: The model and the current rule are measured by exactly the same steps, with no prices after the window.
+    """
+    bounded_market = tuple(frame.loc[:period[1]] for frame in market_data)
+    daily, _ = portfolio.simulate(*bounded_market, target_weights, policy, *period, cfg)
+    return evaluate.portfolio_metrics(daily["value"], daily["cost_paid"])
+
+
 def _score_window(
     model: Pipeline, columns: list[str], market_data: tuple, score_dates: pd.DatetimeIndex, cfg: dict,
 ) -> dict:
@@ -89,18 +102,15 @@ def _score_window(
     target_weights = pd.Series(cfg["target_weights"]["policy"], dtype=float)
     rule = portfolio.make_current_rule_policy(
         target_weights, portfolio.decision_dates(score_dates, *period, portfolio.review_frequency(cfg)), cfg)
-    bounded_market = tuple(frame.loc[:end] for frame in market_data)
-    agent, _ = portfolio.simulate(*bounded_market, target_weights, _model_policy(model, columns), *period, cfg)
-    baseline, _ = portfolio.simulate(*bounded_market, target_weights, rule, *period, cfg)
-    model_metrics = evaluate.portfolio_metrics(agent["value"], agent["cost_paid"])
-    rule_metrics = evaluate.portfolio_metrics(baseline["value"], baseline["cost_paid"])
-    agent_mdd, baseline_mdd = model_metrics["max_drawdown"], rule_metrics["max_drawdown"]
+    model_metrics = _policy_metrics(_model_policy(model, columns), market_data, target_weights, period, cfg)
+    rule_metrics = _policy_metrics(rule, market_data, target_weights, period, cfg)
     return {
         "block_start": start,
         "block_end": end,
-        "max_drawdown_reduction": evaluate.max_drawdown_reduction(agent_mdd, baseline_mdd),
-        "agent_mdd": agent_mdd,
-        "baseline_mdd": baseline_mdd,
+        "max_drawdown_reduction": evaluate.max_drawdown_reduction(model_metrics["max_drawdown"],
+                                                                  rule_metrics["max_drawdown"]),
+        "agent_mdd": model_metrics["max_drawdown"],
+        "baseline_mdd": rule_metrics["max_drawdown"],
         "agent_return": model_metrics["annual_return"],
         "baseline_return": rule_metrics["annual_return"],
         "agent_cost": model_metrics["annual_trading_cost"],
