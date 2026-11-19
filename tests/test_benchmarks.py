@@ -126,13 +126,21 @@ def test_unit_max_sharpe_gives_the_cash_ticker_zero_weight() -> None:
     assert weights.sum() == pytest.approx(1.0)
 
 
-@pytest.mark.parametrize("method", ["min_variance", "mean_variance", "risk_parity"])
-def test_unit_cash_ticker_only_changes_max_sharpe(method: str) -> None:
-    """The other three methods treat the cash ticker as an ordinary asset."""
+@pytest.mark.parametrize("method", benchmarks.METHODS)
+def test_unit_risky_weights_exclude_cash_and_respect_the_cap(method: str) -> None:
+    """Apply the configured cap to every risky method and leave cash at zero."""
     frame = _returns_with_cash()
-    plain = benchmarks.fit_weights(frame, method, {"risk_aversion": 3.0})
-    with_cash = benchmarks.fit_weights(frame, method, {"risk_aversion": 3.0, "cash_ticker": "CASH"})
-    pd.testing.assert_series_equal(plain, with_cash)
+    frame["A"] = frame["A"] / 10 + 0.005
+    weights = benchmarks.fit_weights(frame, method, {"risk_aversion": 3.0, "cash_ticker": "CASH", "max_weight": 0.55})
+    assert weights["CASH"] == 0.0
+    assert weights.max() <= 0.55 + 1e-9
+    assert weights.sum() == pytest.approx(1.0)
+
+
+def test_unit_fit_rejects_a_cap_below_equal_weight() -> None:
+    """Fail before optimizing if caps make full investment infeasible."""
+    with pytest.raises(ValueError, match="benchmarks.max_weight"):
+        benchmarks.fit_weights(_uncorrelated_returns(), "min_variance", {"max_weight": 0.4})
 
 
 def test_unit_unknown_cash_ticker_raises() -> None:
@@ -150,7 +158,7 @@ def test_unit_missing_risk_aversion_raises() -> None:
 def test_integration_report_and_fit_weights_give_one_max_sharpe_answer() -> None:
     """The max-Sharpe row in the report equals what allocation gets from fit_weights."""
     market_data, cfg = _market_fixture()
-    cfg["benchmarks"]["cash_ticker"] = "B"
+    cfg["benchmarks"].update({"cash_ticker": "B", "max_weight": 1.0})
     table = benchmarks.run_benchmarks(market_data, cfg, "2020-01-01", "2020-03-31")
     prices = market_data[0].loc[cfg["portfolio"]["first_decision_date"]:cfg["split"]["train_end"],
                                 cfg["data"]["tickers"]]

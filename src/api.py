@@ -47,7 +47,7 @@ CFG = config.load_config(config.CONFIG_PATH)
 RULE_VERSION = "rule"          # model_version when no model is loaded
 POLICY_MODEL, POLICY_RULE = "model", "rule"
 SMART = "smart"                # the rebalancing method where the model decides
-NO_MODEL_REASON = "No model has passed the quality gate, so today's rule decides."
+NO_MODEL_REASON = "No compatible approved model is available, so today's rule decides."
 MS_PER_SECOND = 1000
 
 
@@ -179,6 +179,9 @@ def load_serving_model(cfg: dict, env: dict[str, str]) -> tuple[Pipeline | None,
         model = utils.load_model(path)
     except FileNotFoundError as error:
         logger.warning("No model to serve (%s). Rule-only mode: today's rule decides.", error)
+        return None, RULE_VERSION
+    if not allocation.model_target_matches(model, cfg):
+        logger.warning("Model target metadata is missing or differs from config. Rule-only mode.")
         return None, RULE_VERSION
     logger.info("Serving model %s", version)
     return model, version
@@ -361,6 +364,28 @@ def _rule_decision(method: str, state: pd.DataFrame, close_wide: pd.DataFrame, t
             "reason": f"{NO_MODEL_REASON} {reason}" if fallback else reason}
 
 
+def _target_decision(method: str, model: Pipeline | None, state: pd.DataFrame, close: pd.DataFrame,
+                     target: pd.Series, target_method: str, cfg: dict) -> dict:
+    """Apply the chosen rule and explain a smart fallback for a different allocation target."""
+    if method != SMART:
+        return _rule_decision(method, state, close, target, cfg)
+    if target_method != "policy":
+        decision = _rule_decision("calendar_and_band", state, close, target, cfg)
+        fit = allocation.target_fit(target, cfg, None)
+        fallback_reason = fit["reason"] or "Calculated targets use calendar-and-band for smart serving."
+        decision.update(fallback=True, reason=f"{fallback_reason} {decision['reason']}")
+        return decision
+    if model is None:
+        return _rule_decision(SMART, state, close, target, cfg)
+    if cfg["target_weights"]["method"] == "policy" and allocation.model_target_matches(model, cfg):
+        return _model_decision(model, state, cfg)
+    decision = _rule_decision("calendar_and_band", state, close, target, cfg)
+    decision.update(fallback=True, reason=(
+        "The loaded model target is missing or differs from the requested policy weights. "
+        "The calendar-and-band rule decides. " + decision["reason"]))
+    return decision
+
+
 def recommend(body: PredictRequest, model: Pipeline | None, model_version: str, cfg: dict) -> PredictResponse:
     """The whole /predict flow, calling only existing modules.
 
@@ -374,13 +399,10 @@ def recommend(body: PredictRequest, model: Pipeline | None, model_version: str, 
     weights, total = trades.positions_to_weights(_positions_frame(body, cfg), cfg["data"]["tickers"],
                                                  names["ticker_column"], names["value_column"])
     prices = market_inputs(body, cfg)
-    target = allocation.resolve_target(body.target_method.value, cfg, None)
-    state = portfolio.live_state(*prices, weights, body.drawdown, body.weeks_since_rebalance, target, cfg)
     method = body.rebalancing_method.value
-    if method == SMART and model is not None:
-        decision = _model_decision(model, state, cfg)
-    else:
-        decision = _rule_decision(method, state, prices[0], target, cfg)
+    target = allocation.stored_target(body.target_method.value, cfg)
+    state = portfolio.live_state(*prices, weights, body.drawdown, body.weeks_since_rebalance, target, cfg)
+    decision = _target_decision(method, model, state, prices[0], target, body.target_method.value, cfg)
     proposed = trades.proposed_portfolio(weights, target, decision["recommendation"], total)
     orders = trades.trade_list(weights, proposed, total, cfg["portfolio"]["min_trade"])
     return PredictResponse(
