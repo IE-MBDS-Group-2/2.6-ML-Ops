@@ -133,6 +133,19 @@ The pipeline never downloads data. Use the `prices.csv` that Ricardo shares with
 
 Run `python scripts/fetch_prices.py` only to make a new snapshot. Downloads differ over time, so a new file has a different checksum and gives different results.
 
+## Refit calculated allocation targets
+
+At each retrain, run `python -m scripts.fit_targets` against the frozen training snapshot.
+The command fits minimum variance, maximum Sharpe, mean-variance and risk parity with the
+same optimizer as the benchmark report. It uses prices through `split.train_end` only.
+Covariance shrinkage stabilizes the estimates, `benchmarks.max_weight` caps each asset,
+and the cash ticker has zero weight in the four risky allocations. Maximum Sharpe uses
+cash returns as its risk-free return.
+
+The command updates `target_weights.calculated` in `config.yaml` and records the source
+checksum and return dates. Submit the configuration changes through a reviewed PR when
+retraining so the API reads the same versioned weights.
+
 ## Run
 ```bash
 python -m src.main

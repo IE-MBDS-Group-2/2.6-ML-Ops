@@ -37,6 +37,32 @@ target_weights:                  # DECISION D19: the mix the portfolio is rebala
   method: "policy"               # policy = use the weights listed below; or calculate them:
                                  # min_variance | max_sharpe | mean_variance | risk_parity
   policy: {SPY: 0.40, EFA: 0.20, IEF: 0.30, GLD: 0.05, BIL: 0.05}   # your own targets; must sum to 1
+  calculated:
+    # SHA-256: 3cce101c20eb1bcd5f453176affaa3c7f4a3f470a89973de47617134d6705526; return dates: 2007-09-10 to 2019-12-31; training cut-off: 2019-12-31.
+    min_variance:
+      SPY: 0.2532459296878587
+      EFA: 0.0
+      IEF: 0.6
+      GLD: 0.14675407031214138
+      BIL: 0.0
+    max_sharpe:
+      SPY: 0.27506277036478993
+      EFA: 0.0
+      IEF: 0.6000000000000005
+      GLD: 0.12493722963520953
+      BIL: 0.0
+    mean_variance:
+      SPY: 0.5027158562205666
+      EFA: 3.007684981013869e-17
+      IEF: 0.2777285113736169
+      GLD: 0.2195556324058164
+      BIL: 0.0
+    risk_parity:
+      SPY: 0.14768266161846705
+      EFA: 0.11225045565983753
+      IEF: 0.5914027752442063
+      GLD: 0.1486641074774892
+      BIL: 0.0
 
 rebalancing:                     # DECISION D17/D19: how the user wants to rebalance
   method: "smart"                # smart (our model decides) | calendar | tolerance_band | calendar_and_band
@@ -166,7 +192,8 @@ benchmarks:                      # DECISION D19: reported, never gated; fitted o
   enabled: true
   methods: ["min_variance", "max_sharpe", "mean_variance", "risk_parity"]
   risk_aversion: 3.0             # ESTIMATE, mean_variance only
-  cash_ticker: "BIL"             # max_sharpe: returns in excess of this ticker, which gets weight 0; null = none
+  cash_ticker: "BIL"             # excluded from risky methods; risk-free return for max_sharpe; null = none
+  max_weight: 0.60               # maximum fraction in any one risky asset
 
 guards:                          # README "Goal and success metrics"; reported, not gated
   max_return_shortfall: 0.0025   # annual net return no more than 0.25 points below the baseline

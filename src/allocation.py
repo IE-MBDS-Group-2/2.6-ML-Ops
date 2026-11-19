@@ -86,6 +86,16 @@ def resolve_target(method: str, cfg: dict, train_returns: pd.DataFrame | None) -
     return target
 
 
+def stored_target(method: str, cfg: dict) -> pd.Series:
+    """Read the configured policy or a previously fitted allocation in ticker order."""
+    _check_choice(TARGET_KEY, method)
+    settings = cfg["target_weights"]
+    weights = settings["policy"] if method == "policy" else settings.get("calculated", {}).get(method)
+    if weights is None:
+        raise ValueError(f"No stored weights for {method!r}. Run python -m scripts.fit_targets at retrain time.")
+    return pd.Series(weights, dtype=float).reindex(cfg["data"]["tickers"])
+
+
 def _check_fit_inputs(target: pd.Series, tickers: list[str], train_returns: pd.DataFrame | None) -> None:
     """Raise if the target or the train returns do not cover exactly the configured tickers.
 

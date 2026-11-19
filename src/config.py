@@ -15,6 +15,7 @@ Tests     tests/test_config.py
 """
 
 import logging
+import math
 import os
 from pathlib import Path
 
@@ -43,6 +44,7 @@ ALLOWED_VALUES = {
     ("costs", "model"): ("flat", "realistic"),
 }
 
+CALCULATED_TARGETS = ALLOWED_VALUES[("target_weights", "method")][1:]
 WEIGHT_SUM_TOLERANCE = 1e-9
 
 # Names read from .env or the process environment, with the value used when a name is absent.
@@ -100,17 +102,34 @@ def _check_allowed_values(cfg: dict) -> None:
 
 
 def _check_target_weights(cfg: dict) -> None:
-    """Raise if the policy weights do not cover exactly the configured tickers or do not sum to 1."""
-    policy = cfg["target_weights"].get("policy")
+    """Validate the policy and every stored allocation against the configured tickers."""
+    settings = cfg["target_weights"]
+    policy = settings.get("policy")
     if not isinstance(policy, dict) or not policy:
         raise KeyError("config.yaml is missing keys: ['target_weights.policy'] (one weight per ticker).")
     tickers = cfg["data"].get("tickers", [])
-    if sorted(policy) != sorted(tickers):
-        raise ValueError(f"target_weights.policy covers {sorted(policy)} but data.tickers is {sorted(tickers)}. "
+    _check_weight_vector("target_weights.policy", policy, tickers)
+    if "calculated" not in settings and settings["method"] == "policy":
+        return
+    calculated = settings.get("calculated")
+    if not isinstance(calculated, dict) or calculated.keys() != set(CALCULATED_TARGETS):
+        raise ValueError(f"target_weights.calculated must contain {', '.join(CALCULATED_TARGETS)}. "
+                         "Run python -m scripts.fit_targets with the selected snapshot.")
+    for method, weights in calculated.items():
+        _check_weight_vector(f"target_weights.calculated.{method}", weights, tickers)
+
+
+def _check_weight_vector(name: str, weights: object, tickers: list[str]) -> None:
+    """Require a finite, long-only weight for each ticker and a total of one."""
+    if not isinstance(weights, dict) or weights.keys() != set(tickers):
+        keys = list(weights) if isinstance(weights, dict) else []
+        raise ValueError(f"{name} covers {keys} but data.tickers is {tickers}. "
                          "List one weight for every ticker, and no others.")
-    total = float(sum(policy.values()))
+    if any(type(weight) not in (int, float) or not 0 <= weight <= 1 for weight in weights.values()):
+        raise ValueError(f"{name} must contain finite weights between 0 and 1.")
+    total = math.fsum(weights.values())
     if abs(total - 1.0) > WEIGHT_SUM_TOLERANCE:
-        raise ValueError(f"target_weights.policy sums to {total:.6f}. The weights must sum to 1.")
+        raise ValueError(f"{name} sums to {total:.6f}. The weights must sum to 1.")
 
 
 def _check_rebalancing(cfg: dict) -> None:

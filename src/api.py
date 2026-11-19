@@ -374,9 +374,12 @@ def recommend(body: PredictRequest, model: Pipeline | None, model_version: str, 
     weights, total = trades.positions_to_weights(_positions_frame(body, cfg), cfg["data"]["tickers"],
                                                  names["ticker_column"], names["value_column"])
     prices = market_inputs(body, cfg)
-    target = allocation.resolve_target(body.target_method.value, cfg, None)
-    state = portfolio.live_state(*prices, weights, body.drawdown, body.weeks_since_rebalance, target, cfg)
     method = body.rebalancing_method.value
+    if method == SMART:
+        target = allocation.resolve_target(body.target_method.value, cfg, None)
+    else:
+        target = allocation.stored_target(body.target_method.value, cfg)
+    state = portfolio.live_state(*prices, weights, body.drawdown, body.weeks_since_rebalance, target, cfg)
     if method == SMART and model is not None:
         decision = _model_decision(model, state, cfg)
     else:

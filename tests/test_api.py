@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from src import api, features, portfolio, train, utils
+from src import api, config, features, portfolio, train, utils
 
 CFG = api.CFG
 TICKERS = CFG["data"]["tickers"]
@@ -242,6 +242,21 @@ def test_integration_bad_prices_are_400(start_app):
     with start_app(None) as client:
         response = client.post("/predict", json=body)
     assert response.status_code == 400
+
+
+@pytest.mark.parametrize("target_method", config.CALCULATED_TARGETS)
+def test_integration_band_rule_uses_stored_calculated_weights(start_app, target_method):
+    """A full band-triggered trade goes to the reviewed target weights."""
+    with start_app(None) as client:
+        response = client.post("/predict", json=request_body(
+            target_method=target_method, rebalancing_method="tolerance_band", shifts={"SPY": 0.25, "IEF": -0.25},
+        ))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["recommendation"] == 1.0
+    assert {row["ticker"]: row["weight"] for row in body["proposed_portfolio"]} == pytest.approx(
+        CFG["target_weights"]["calculated"][target_method])
+    assert body["fallback"] is False
 
 
 def test_integration_calculated_target_without_train_years_is_400(start_app):

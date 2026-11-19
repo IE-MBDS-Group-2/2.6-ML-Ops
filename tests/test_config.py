@@ -72,6 +72,24 @@ def test_unit_load_config_checks_the_policy_weights(tmp_path):
         _load_changed(tmp_path, "target_weights", "policy", uneven)
 
 
+@pytest.mark.parametrize("invalid", ["missing-ticker", "bad-sum", "nonfinite", "missing-method"])
+def test_unit_load_config_rejects_broken_calculated_weights(tmp_path, invalid):
+    cfg = _valid()
+    policy = cfg["target_weights"]["policy"]
+    calculated = {method: dict(policy) for method in config.CALCULATED_TARGETS}
+    weights = calculated["min_variance"]
+    if invalid == "missing-ticker":
+        del weights["SPY"]
+    elif invalid == "bad-sum":
+        weights["SPY"] = 0.5
+    elif invalid == "nonfinite":
+        weights["SPY"] = float("nan")
+    else:
+        del calculated["max_sharpe"]
+    with pytest.raises(ValueError, match=r"target_weights\.calculated"):
+        _load_changed(tmp_path, "target_weights", "calculated", calculated)
+
+
 @pytest.mark.parametrize("band", [0, -1, "five", None, True])
 def test_unit_load_config_rejects_a_tolerance_band_that_is_not_a_positive_number(tmp_path, band):
     with pytest.raises(ValueError, match="rebalancing.tolerance_band"):
