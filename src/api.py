@@ -47,7 +47,7 @@ CFG = config.load_config(config.CONFIG_PATH)
 RULE_VERSION = "rule"          # model_version when no model is loaded
 POLICY_MODEL, POLICY_RULE = "model", "rule"
 SMART = "smart"                # the rebalancing method where the model decides
-NO_MODEL_REASON = "No model has passed the quality gate, so today's rule decides."
+NO_MODEL_REASON = "No compatible approved model is available, so today's rule decides."
 MS_PER_SECOND = 1000
 
 
@@ -179,6 +179,9 @@ def load_serving_model(cfg: dict, env: dict[str, str]) -> tuple[Pipeline | None,
         model = utils.load_model(path)
     except FileNotFoundError as error:
         logger.warning("No model to serve (%s). Rule-only mode: today's rule decides.", error)
+        return None, RULE_VERSION
+    if not allocation.model_target_matches(model, cfg):
+        logger.warning("Model target metadata is missing or differs from config. Rule-only mode.")
         return None, RULE_VERSION
     logger.info("Serving model %s", version)
     return model, version
@@ -364,18 +367,22 @@ def _rule_decision(method: str, state: pd.DataFrame, close_wide: pd.DataFrame, t
 def _target_decision(method: str, model: Pipeline | None, state: pd.DataFrame, close: pd.DataFrame,
                      target: pd.Series, target_method: str, cfg: dict) -> dict:
     """Apply the chosen rule and explain a smart fallback for a different allocation target."""
-    if method == SMART and target_method != "policy":
+    if method != SMART:
+        return _rule_decision(method, state, close, target, cfg)
+    if target_method != "policy":
         decision = _rule_decision("calendar_and_band", state, close, target, cfg)
-        fit = allocation.target_fit(target, cfg, close.pct_change(fill_method=None).iloc[1:])
-        decision.update(fallback=True, reason=fit["reason"] or
-                        "Calculated targets use the calendar-and-band rule for smart serving.")
+        fit = allocation.target_fit(target, cfg, None)
+        fallback_reason = fit["reason"] or "Calculated targets use calendar-and-band for smart serving."
+        decision.update(fallback=True, reason=f"{fallback_reason} {decision['reason']}")
         return decision
-    if method == SMART and model is not None and cfg["target_weights"]["method"] == "policy":
+    if model is None:
+        return _rule_decision(SMART, state, close, target, cfg)
+    if cfg["target_weights"]["method"] == "policy" and allocation.model_target_matches(model, cfg):
         return _model_decision(model, state, cfg)
-    decision = _rule_decision(method, state, close, target, cfg)
-    if method == SMART and cfg["target_weights"]["method"] != "policy":
-        decision["reason"] = ("The configured model target differs from the requested policy weights. "
-                              "The calendar-and-band rule decides. " + decision["reason"])
+    decision = _rule_decision("calendar_and_band", state, close, target, cfg)
+    decision.update(fallback=True, reason=(
+        "The loaded model target is missing or differs from the requested policy weights. "
+        "The calendar-and-band rule decides. " + decision["reason"]))
     return decision
 
 

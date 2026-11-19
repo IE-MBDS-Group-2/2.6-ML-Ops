@@ -198,14 +198,21 @@ Changing the cap changes the investment mandate and requires review.
 
 The API and pipeline read the reviewed weights in `target_weights.calculated`.
 For a calculated target, `smart` serving falls back to calendar-and-band and explains the reason.
-The API estimates tracking error to the policy mix using the recent prices supplied in the request.
+The API reports the training-period tracking-error estimate stored with the fitted weights.
+The estimate stays fixed across requests until the next reviewed refit.
 Models evaluated with calculated targets are research candidates. Serving calculated targets uses the
 rule even if a model is present. The existing policy target keeps its normal smart behavior.
 During grid search, calculated targets are refitted inside each training window before its scoring
 block so later training prices cannot influence earlier allocation decisions.
 
 Run `python -m scripts.fit_targets` at every retrain and submit the updated configuration for review.
-The generated block records the snapshot checksum, return dates and training cut-off.
+The generated block records the snapshot checksum, return dates, training cut-off, optimizer settings
+and training-period tracking errors as machine-readable data. Config loading rejects stale split/settings
+metadata, and calculated-target training verifies the actual snapshot checksum before it starts.
+
+Every saved model includes its training target method and weights inside its joblib artifact and W&B
+metadata. The API uses a model only when those values match the configured target. Older artifacts
+without target metadata fall back to the rule until retrained.
 
 ### The gate and the honest result
 A model is only saved, registered and served if `max_drawdown_reduction >= 0.20` on validation (2020 to 2021). That is a worst loss at least 20% smaller than today's rule (quarterly rebalance plus a 5-point drift check).
@@ -281,7 +288,7 @@ and the cash ticker has zero weight in the four risky allocations. Maximum Sharp
 cash returns as its risk-free return.
 
 The command updates `target_weights.calculated` in `config.yaml` and records the source
-checksum and return dates. Submit the configuration changes through a reviewed PR when
+checksum, return dates and machine-readable fit provenance. Submit the changes through a reviewed PR when
 retraining so the API reads the same versioned weights.
 No access to the snapshot? Make sample data instead: `python -m scripts.make_sample_prices`. The prices are random, every run logs that they are SYNTHETIC, and CI uses them. The script refuses to overwrite a file that already exists unless you pass `--force`, so it cannot replace the real snapshot by accident. Results on sample data mean nothing.
 

@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from src import api, config, features, portfolio, train, utils
+from src import allocation, api, config, features, portfolio, train, utils
 
 CFG = api.CFG
 TICKERS = CFG["data"]["tickers"]
@@ -57,8 +57,10 @@ def fitted_model():
     rng = np.random.default_rng(1)
     X = pd.DataFrame(rng.normal(0.0, 0.05, size=(60, len(columns))), columns=columns)
     y = pd.Series([0.0, 0.5, 1.0] * 20)
-    return train.train_model(X, y, features.get_feature_preprocessor(columns), "classification",
-                             CFG["model"]["params"], CFG["model"]["random_state"])
+    model = train.train_model(X, y, features.get_feature_preprocessor(columns), "classification",
+                              CFG["model"]["params"], CFG["model"]["random_state"])
+    model.target_metadata_ = allocation.model_target(CFG)
+    return model
 
 
 @pytest.fixture
@@ -283,6 +285,8 @@ def test_integration_policy_request_does_not_use_a_model_for_another_target(star
     assert response.status_code == 200, response.text
     assert response.json()["fallback"] is True
     assert response.json()["prediction"] is None
+    assert api.NO_MODEL_REASON not in response.json()["reason"]
+    assert "requested policy weights" in response.json()["reason"]
 
 
 # ---------- logging ----------
@@ -426,3 +430,35 @@ def test_unit_failing_finish_run_is_logged(monitored, monkeypatch, caplog):
     with caplog.at_level(logging.ERROR, logger="src.api"), client:
         pass
     assert any("cannot close" in record.getMessage() for record in caplog.records)
+
+
+def test_unit_loading_rejects_model_metadata_after_policy_weights_change(tmp_path, fitted_model):
+    """An artifact cannot silently serve a different target after configuration changes."""
+    utils.save_model(fitted_model, tmp_path / "model.joblib")
+    cfg = {**CFG, "paths": {**CFG["paths"], "model": str(tmp_path / "model.joblib")},
+           "target_weights": {**CFG["target_weights"], "policy": dict(CFG["target_weights"]["policy"])}}
+    cfg["target_weights"]["policy"].update(SPY=0.35, IEF=0.35)
+    assert api.load_serving_model(cfg, {"MODEL_SOURCE": "local"}) == (None, "rule")
+
+
+def test_unit_loading_rejects_a_legacy_artifact_without_target_metadata(tmp_path, fitted_model):
+    """Unknown historical training targets require a new reviewed model."""
+    import copy
+
+    legacy = copy.deepcopy(fitted_model)
+    del legacy.target_metadata_
+    utils.save_model(legacy, tmp_path / "model.joblib")
+    cfg = {**CFG, "paths": {**CFG["paths"], "model": str(tmp_path / "model.joblib")}}
+    assert api.load_serving_model(cfg, {"MODEL_SOURCE": "local"}) == (None, "rule")
+
+
+def test_integration_calculated_target_keeps_rule_reason_and_fixed_training_risk(start_app):
+    """The rule explains its action and the target's risk estimate stays independent of request prices."""
+    reasons = []
+    with start_app(None) as client:
+        for seed in (3, 17):
+            answer = client.post("/predict", json=request_body(
+                target_method="min_variance", prices=price_records(seed=seed))).json()
+            assert "No trade:" in answer["reason"] or "Rebalance" in answer["reason"]
+            reasons.append(answer["reason"].split("a year.")[0])
+    assert reasons[0] == reasons[1]

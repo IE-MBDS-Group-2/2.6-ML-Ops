@@ -743,7 +743,7 @@ def explain(state_row: pd.Series, action: float, fallback: bool, cfg: dict) -> s
   config. With a calculated target the request falls back to the calendar-and-band rule (`fallback: true`,
   reason given). Calculated-target serving uses the rule even after research retraining with that target.
   A calculated target changes the mandate the Investment Committee approved. The API reason reports
-  estimated tracking error to the policy weights using the request's recent prices.
+  the fixed training-period tracking error to the policy weights stored at refit time.
   The API and pipeline load reviewed weights from `target_weights.calculated`, refitted at each retrain.
 - **Three places catch a wrong value, all from `config.ALLOWED_VALUES`:** `load_config` at start-up; the API's
   request model (enumerations, so a wrong value is a 422 that lists the allowed ones and `/docs` shows a

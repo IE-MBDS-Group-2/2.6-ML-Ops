@@ -149,13 +149,14 @@ def _window_target(table: pd.DataFrame, market_data: tuple, cfg: dict,
     weights = benchmarks.fit_weights(returns, method, cfg["benchmarks"])
     settings["target_weights"] = {**cfg["target_weights"], "calculated": {
         **cfg["target_weights"].get("calculated", {}), method: weights.to_dict()}}
+    bounded = tuple(frame.loc[:cutoff] for frame in market_data)
     rebuilt = portfolio.build_decision_table(
-        *market_data, weights, cfg["portfolio"]["first_decision_date"], cfg["split"]["train_end"], settings)
+        *bounded, weights, cfg["portfolio"]["first_decision_date"], cutoff, settings)
     return rebuilt, settings
 
 
-def _fit_window(table: pd.DataFrame, market_data: tuple, cfg: dict, model_params: dict, dates: tuple) -> dict:
-    """Fit one model and target using decisions with labels available before the scoring block."""
+def _prepare_window(table: pd.DataFrame, market_data: tuple, cfg: dict, dates: tuple) -> tuple:
+    """Build target and labels once per cutoff, ready to reuse across parameter trials."""
     train_dates, score_dates = dates
     table, settings = _window_target(table, market_data, cfg, train_dates)
     calendar = market_data[0].loc[:cfg["split"]["train_end"]].index
@@ -163,8 +164,26 @@ def _fit_window(table: pd.DataFrame, market_data: tuple, cfg: dict, model_params
                                  errors="ignore").tolist()
     reward_end = portfolio.execution_schedule(calendar, table.index)["reward_end"]
     eligible = table.index.isin(train_dates) & reward_end.lt(score_dates[0])
-    model = _fit_candidate(table.loc[eligible], columns, settings, model_params)
-    return _score_window(model, columns, market_data, score_dates, settings)
+    return table.loc[eligible], settings, columns, score_dates
+
+
+def _prepared_windows(table: pd.DataFrame, market_data: tuple, cfg: dict) -> list:
+    """Prepare chronological training windows independently of candidate parameters."""
+    settings = cfg["selection"]
+    last_end = cfg["split"]["train_end"]
+    calendar = market_data[0].loc[:last_end].index
+    windows = walk_forward_windows(
+        calendar, settings["first_train_end"], last_end, settings["block"], settings["gap_days"])
+    return [_prepare_window(table.loc[:last_end], market_data, cfg, window) for window in windows]
+
+
+def _score_prepared(windows: list, market_data: tuple, model_params: dict) -> pd.DataFrame:
+    """Fit each candidate on the prepared labels and score on the following block."""
+    results = []
+    for rows, cfg, columns, score_dates in windows:
+        model = _fit_candidate(rows, columns, cfg, model_params)
+        results.append(_score_window(model, columns, market_data, score_dates, cfg))
+    return pd.DataFrame(results)
 
 
 def walk_forward_scores(table: pd.DataFrame, market_data: tuple, cfg: dict, model_params: dict) -> pd.DataFrame:
@@ -175,15 +194,7 @@ def walk_forward_scores(table: pd.DataFrame, market_data: tuple, cfg: dict, mode
     Why: Use the gate's trading simulation while sealing the validation and test years.
     Raises: ValueError for invalid date windows or a window with no labelled training rows.
     """
-    settings = cfg["selection"]
-    last_end = cfg["split"]["train_end"]
-    calendar = market_data[0].loc[:last_end].index
-    windows = walk_forward_windows(
-        calendar, settings["first_train_end"], last_end, settings["block"], settings["gap_days"],
-    )
-    return pd.DataFrame([
-        _fit_window(table.loc[:last_end], market_data, cfg, model_params, window) for window in windows
-    ])
+    return _score_prepared(_prepared_windows(table, market_data, cfg), market_data, model_params)
 
 
 def _parameter_grid(cfg: dict) -> dict:
@@ -212,20 +223,22 @@ def grid_search(table: pd.DataFrame, market_data: tuple, cfg: dict, run: object 
     Raises: ValueError for an empty grid, an unsupported parameter or a nonfinite score.
     """
     grid = _parameter_grid(cfg)
-    defaults = cfg["model"]["params"]
+    prepared = None
+    if cfg.get("target_weights", {}).get("method", "policy") != "policy":
+        prepared = _prepared_windows(table, market_data, cfg)
     trials = []
-    best_params = defaults.copy()
+    best_params = cfg["model"]["params"].copy()
     best_score = -float("inf")
     for index, combination in enumerate(product(*grid.values()), 1):
         overrides = dict(zip(grid, combination))
-        params = {**defaults, **overrides}
-        score = float(walk_forward_scores(table, market_data, cfg, params)[
-            "max_drawdown_reduction"].median(skipna=False))
+        params = {**cfg["model"]["params"], **overrides}
+        scores = (walk_forward_scores(table, market_data, cfg, params) if prepared is None
+                  else _score_prepared(prepared, market_data, params))
+        score = float(scores["max_drawdown_reduction"].median(skipna=False))
         if not isfinite(score):
             raise ValueError(f"Grid trial {index} produced no finite median walk-forward score.")
-        metrics = {"trial": index, "median_max_drawdown_reduction": score}
-        tracking.log_metrics(run, metrics, prefix="grid/")
-        trials.append({**overrides, **metrics})
+        tracking.log_metrics(run, {"trial": index, "median_max_drawdown_reduction": score}, prefix="grid/")
+        trials.append({**overrides, "trial": index, "median_max_drawdown_reduction": score})
         if score > best_score:
             best_params, best_score = params, score
     logger.info("Grid search scored %d trials; best median drawdown reduction %.4f", len(trials), best_score)
@@ -249,8 +262,10 @@ def frequency_comparison(market_data: tuple, cfg: dict, model_params: dict) -> p
     rows = []
     for review in config.ALLOWED_VALUES[("rebalancing", "review")]:
         settings = {**cfg, "rebalancing": {**cfg["rebalancing"], "review": review}}
-        table = portfolio.build_decision_table(
-            *training_market, target, cfg["portfolio"]["first_decision_date"], train_end, settings)
+        table = pd.DataFrame()
+        if cfg["target_weights"].get("method", "policy") == "policy":
+            table = portfolio.build_decision_table(
+                *training_market, target, cfg["portfolio"]["first_decision_date"], train_end, settings)
         scores = walk_forward_scores(table, training_market, settings, model_params)
         reduction = scores["max_drawdown_reduction"]
         rows.append({

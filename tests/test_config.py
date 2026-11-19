@@ -144,3 +144,11 @@ def test_unit_load_env_rejects_a_value_outside_the_allowed_list(tmp_path, monkey
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError, match=f"{name} is '{value}'. Allowed:"):
         config.load_env(tmp_path / "absent.env")
+
+
+def test_unit_config_rejects_an_asset_cap_that_cannot_invest_fully(tmp_path):
+    """The same feasibility bound applies at config load and in the optimizer."""
+    cfg = _valid()
+    cfg["benchmarks"]["max_weight"] = 0.2
+    with pytest.raises(ValueError, match=r"benchmarks.max_weight.*0.25"):
+        config.load_config(_write(tmp_path / "config.yaml", cfg))

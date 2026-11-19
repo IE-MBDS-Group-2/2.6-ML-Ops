@@ -14,6 +14,7 @@ Why it matters
 Tests     tests/test_config.py
 """
 
+import hashlib
 import logging
 import math
 import os
@@ -84,6 +85,9 @@ def load_config(path: Path = CONFIG_PATH, *, validate_calculated: bool = True) -
     if missing:
         raise KeyError(f"config.yaml is missing sections: {missing}")
     _check_allowed_values(cfg)
+    params = cfg.get("benchmarks", {})
+    asset_cap(params.get("max_weight", 1.0), len(cfg["data"]["tickers"]) -
+              (params.get("cash_ticker") is not None))
     _check_target_weights(cfg, validate_calculated)
     _check_rebalancing(cfg)
     _check_rl_seeds(cfg)
@@ -116,17 +120,69 @@ def _check_target_weights(cfg: dict, validate_calculated: bool = True) -> None:
     if not isinstance(calculated, dict) or calculated.keys() != set(CALCULATED_TARGETS):
         raise ValueError(f"target_weights.calculated must contain {', '.join(CALCULATED_TARGETS)}. "
                          "Run python -m scripts.fit_targets with the selected snapshot.")
+    check_target_provenance(cfg)
     for method, weights in calculated.items():
         _check_weight_vector(f"target_weights.calculated.{method}", weights, tickers)
         _check_calculated_limits(method, weights, cfg)
+
+
+def fit_settings(cfg: dict) -> dict:
+    """Return the optimizer settings that affect fitted weights and require refitting when changed."""
+    settings = cfg["benchmarks"]
+    return {name: settings.get(name) for name in ("risk_aversion", "cash_ticker", "max_weight")}
+
+
+def check_target_provenance(cfg: dict) -> None:
+    """Require stored allocations and tracking risks to match the current fit window and settings."""
+    fit = cfg["target_weights"].get("fit", {})
+    if not isinstance(fit, dict):
+        raise ValueError("target_weights.fit must contain the reviewed fit provenance.")
+    expected = {
+        "train_start": cfg["portfolio"]["first_decision_date"],
+        "train_end": cfg["split"]["train_end"],
+        "settings": fit_settings(cfg),
+        "policy_weights": cfg["target_weights"]["policy"],
+    }
+    if any(fit.get(name) != value for name, value in expected.items()):
+        raise ValueError("target_weights.fit is missing or stale. Re-run python -m scripts.fit_targets.")
+    checksum = fit.get("snapshot_sha256", "")
+    if not isinstance(checksum, str) or len(checksum) != 64 or any(char not in "0123456789abcdef" for char in checksum):
+        raise ValueError("target_weights.fit.snapshot_sha256 must be a SHA-256 checksum.")
+    _check_training_risk(fit.get("tracking_error"))
+
+
+def _check_training_risk(errors: object) -> None:
+    """Require a finite training-period tracking risk for every calculated allocation."""
+    if not isinstance(errors, dict) or errors.keys() != set(CALCULATED_TARGETS):
+        raise ValueError("target_weights.fit.tracking_error must cover all four calculated methods.")
+    if any(type(value) not in (int, float) or not math.isfinite(value) or value < 0 for value in errors.values()):
+        raise ValueError("target_weights.fit.tracking_error must contain finite nonnegative estimates.")
+
+
+def check_target_snapshot(cfg: dict, path: Path) -> None:
+    """Stop calculated-target training when the fit belongs to a different snapshot or split."""
+    if cfg["target_weights"]["method"] == "policy":
+        return
+    check_target_provenance(cfg)
+    if hashlib.sha256(path.read_bytes()).hexdigest() != cfg["target_weights"]["fit"]["snapshot_sha256"]:
+        raise ValueError("The stored targets belong to another snapshot. Re-run python -m scripts.fit_targets.")
+
+
+def asset_cap(cap: object, size: int) -> float:
+    """Validate that one cap permits a finite, fully invested risky allocation."""
+    if size < 1:
+        raise ValueError("Calculated targets need at least one risky asset.")
+    if isinstance(cap, bool) or not isinstance(cap, (int, float)) or not 0 < cap <= 1 or cap < 1.0 / size:
+        raise ValueError(f"benchmarks.max_weight {cap!r} must be between {1.0 / size:.6g} and 1 "
+                         f"to invest fully across {size} risky assets.")
+    return float(cap)
 
 
 def _check_calculated_limits(method: str, weights: dict, cfg: dict) -> None:
     """Reject stored risky allocations that exceed the cap or allocate to the cash ticker."""
     params = cfg["benchmarks"]
     cap = params.get("max_weight", 1.0)
-    if type(cap) not in (int, float) or not 0 < cap <= 1:
-        raise ValueError("benchmarks.max_weight must be a finite number above 0 and at most 1.")
+    asset_cap(cap, len(cfg["data"]["tickers"]) - (params.get("cash_ticker") is not None))
     if max(weights.values()) > cap + WEIGHT_SUM_TOLERANCE:
         raise ValueError(f"target_weights.calculated.{method} exceeds benchmarks.max_weight.")
     cash = params.get("cash_ticker")

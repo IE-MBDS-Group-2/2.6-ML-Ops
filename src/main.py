@@ -402,11 +402,12 @@ def _keep_or_drop_model(model: Pipeline, metrics: dict, paths: dict, cfg: dict, 
             logger.warning("Removed %s: it is from an earlier run and no model passed the gate now", paths["model"])
         logger.warning("No model saved or registered: the quality gate is not met. Today's rule serves")
         return None
+    model.target_metadata_ = allocation.model_target(cfg)
     utils.save_model(model, paths["model"])
     key = cfg["quality_gate"]["metric_key"]
     tracking.log_model(tracker, paths["model"], cfg["tracking"]["model_artifact"],
                        {key: metrics[key], "gate": metrics["gate"], "challenger": metrics["challenger"]["name"],
-                        "model_type": metrics["model_type"]})
+                        "model_type": metrics["model_type"], "target": model.target_metadata_})
     return model
 
 
@@ -592,6 +593,7 @@ def run(cfg: dict, tracker: object = None) -> dict:
     """
     paths = config.resolve_paths(cfg, PROJECT_ROOT)
     # 1. Load, clean and validate the raw prices; keep the clean table and record it as the data version.
+    config.check_target_snapshot(cfg, paths["raw_data"])
     clean = load_data.load_prices(paths["raw_data"], cfg)
     utils.save_csv(clean, paths["processed_data"])
     tracking.log_dataset(tracker, paths["processed_data"], cfg["tracking"]["dataset_artifact"])

@@ -128,6 +128,8 @@ def _pipeline_setup(tmp_path: Path, monkeypatch, prices: pd.DataFrame | None = N
     recent = prices[prices["date"].isin(days[-300:])]
     recent.to_csv(tmp_path / "data" / "inference" / "prices_latest.csv", index=False)
     cfg = config.load_config(main.CONFIG_PATH)
+    cfg["target_weights"].pop("calculated", None)
+    cfg["target_weights"].pop("fit", None)
     cfg["data"]["end"] = "2023-12-29"
     cfg["portfolio"]["first_decision_date"] = "2020-04-10"
     cfg["split"].update(train_end="2021-12-31", val_end="2022-12-31", test_end="2023-12-29")

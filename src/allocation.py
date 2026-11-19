@@ -115,18 +115,44 @@ def _check_fit_inputs(target: pd.Series, tickers: list[str], train_returns: pd.D
         raise ValueError(f"train_returns has no column for {missing}. Pass the daily returns of every ticker.")
 
 
+def _target_tracking_error(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None) -> float:
+    """Use training returns during fitting, or the reviewed training-risk estimate during serving."""
+    tickers = cfg["data"]["tickers"]
+    policy = pd.Series(cfg["target_weights"]["policy"], dtype=float).reindex(tickers)
+    if train_returns is None:
+        settings = cfg["target_weights"]
+        for method, weights in settings.get("calculated", {}).items():
+            if np.allclose(target.reindex(tickers), pd.Series(weights).reindex(tickers), atol=SAME_WEIGHTS, rtol=0):
+                return float(settings["fit"]["tracking_error"][method])
+    _check_fit_inputs(target, tickers, train_returns)
+    difference = (target.reindex(tickers) - policy).to_numpy()
+    covariance = train_returns[tickers].cov().to_numpy()
+    return float(np.sqrt(difference @ covariance @ difference * features.TRADING_DAYS_PER_YEAR))
+
+
+def model_target(cfg: dict) -> dict:
+    """Describe the target used to train a model, stored inside its joblib artifact."""
+    method = cfg["target_weights"]["method"]
+    return {"method": method, "weights": stored_target(method, cfg).to_dict()}
+
+
+def model_target_matches(model: object, cfg: dict) -> bool:
+    """Only serve artifacts with recorded training weights that match the current target."""
+    return getattr(model, "target_metadata_", None) == model_target(cfg)
+
+
 def target_fit(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None) -> dict:
     """Say whether the model can serve this target, and how far the target is from the approved policy mix.
 
     Inputs:  target, the weights in use (from resolve_target); cfg, the full config (reads data.tickers and
-             target_weights.policy); train_returns, daily returns of the train years (not needed for the
-             policy mix itself).
+             target_weights.policy); train_returns, daily training returns at fit time, or None to read
+             the stored training-period estimate for a calculated target during serving.
     Outputs: {"fallback": bool, "reason": str, "expected_tracking_error": float}. The policy mix gives
              False, "" and 0.0. Any other target gives True, a reason, and the ex-ante annual tracking error
              sqrt((w - w_policy)' S (w - w_policy) x trading days), S the covariance of the daily returns.
-    Why:     the model is trained for the policy mix, so another target falls back to the calendar-and-band
-             rule; and a different target changes the mandate the Investment Committee approved, so the size of
-             that change is always reported. Ex-ante, because one live request has no path to measure.
+    Why:     smart serving is restricted to the policy mix, so another target uses calendar-and-band.
+             Training-risk estimates are computed at refit time and stored with the reviewed weights.
+             Serving reads that estimate when train_returns is None.
     Raises:  ValueError if the target or the returns do not cover exactly the configured tickers, or the
              returns are missing for a target that is not the policy mix.
     """
@@ -134,10 +160,7 @@ def target_fit(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None)
     policy = pd.Series(cfg["target_weights"]["policy"], dtype=float).reindex(tickers)
     if sorted(target.index) == sorted(tickers) and np.allclose(target.reindex(tickers), policy, atol=SAME_WEIGHTS):
         return {"fallback": False, "reason": "", "expected_tracking_error": 0.0}
-    _check_fit_inputs(target, tickers, train_returns)
-    difference = (target.reindex(tickers) - policy).to_numpy()
-    covariance = train_returns[tickers].cov().to_numpy()
-    tracking = float(np.sqrt(difference @ covariance @ difference * features.TRADING_DAYS_PER_YEAR))
+    tracking = _target_tracking_error(target, cfg, train_returns)
     reason = ("Smart serving is restricted to the policy weights, so with this target the calendar-and-band "
               f"rule decides. Expected tracking error to the policy weights: {tracking:.1%} a year.")
     logger.info("Target is not the policy mix: fallback to the rule, expected tracking error %.4f", tracking)

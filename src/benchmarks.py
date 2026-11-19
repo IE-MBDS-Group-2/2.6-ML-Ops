@@ -26,7 +26,7 @@ import pandas as pd
 from scipy import optimize
 from sklearn.covariance import LedoitWolf
 
-from src import evaluate, portfolio, tracking, utils
+from src import config, evaluate, portfolio, tracking, utils
 
 logger = logging.getLogger(__name__)
 METHODS = ("min_variance", "max_sharpe", "mean_variance", "risk_parity")
@@ -61,14 +61,6 @@ def _objective(method: str, mean: np.ndarray, covariance: np.ndarray, params: di
     return lambda weights: float(0.5 * aversion * (weights @ covariance @ weights) - mean @ weights)
 
 
-def _asset_cap(cap: object, size: int) -> float:
-    """Check the per-asset cap permits a fully invested risky portfolio."""
-    if isinstance(cap, bool) or not isinstance(cap, (int, float)) or not 0 < cap <= 1 or cap < 1.0 / size:
-        raise ValueError(f"benchmarks.max_weight {cap!r} must be between {1.0 / size:.6g} and 1 "
-                         f"to invest fully across {size} risky assets.")
-    return float(cap)
-
-
 def _solve_weights(train_returns: pd.DataFrame, method: str, params: dict) -> pd.Series:
     """Solve one long-only allocation on the given returns.
 
@@ -84,7 +76,7 @@ def _solve_weights(train_returns: pd.DataFrame, method: str, params: dict) -> pd
         raise ValueError("Benchmark training returns must be finite. Check the source prices.")
     size = train_returns.shape[1]
     initial = np.full(size, 1.0 / size)
-    cap = _asset_cap(params.get("max_weight", 1.0), size)
+    cap = config.asset_cap(params.get("max_weight", 1.0), size)
     if cap == 1.0 / size:
         return pd.Series(initial, index=train_returns.columns, dtype=float)
     covariance = LedoitWolf().fit(train_returns).covariance_

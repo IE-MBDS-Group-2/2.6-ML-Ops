@@ -222,27 +222,33 @@ def test_unit_frequency_comparison_one_row_per_review_on_train_years(monkeypatch
     assert cfg["rebalancing"]["review"] == "weekly"          # the caller's config is not changed
 
 
-def test_unit_calculated_window_target_ignores_prices_after_its_training_end(monkeypatch) -> None:
-    """Future prices cannot change the allocation used to label an earlier training window."""
+def test_integration_calculated_window_labels_ignore_future_prices() -> None:
+    """Real target fitting, labeling and eligible rows use only prices through each training cutoff."""
     from scripts.make_sample_prices import make_sample_prices
-    from src import clean_data, config
+    from src import config, load_data, main
 
     cfg = config.load_config()
     cfg["target_weights"]["method"] = "min_variance"
     cfg["split"]["train_end"] = "2008-12-31"
     data = cfg["data"]
-    cols = data["columns"]
-    prices = make_sample_prices(data["tickers"], data["start"], cfg["split"]["train_end"], 12, cols)
-    close = clean_data.to_wide(prices, cols["close_column"], data["tickers"],
-                               cols["date_column"], cols["ticker_column"])
-    close.index = pd.to_datetime(close.index)
-    volume = close * 1000
-    market = pd.DataFrame(index=close.index)
-    dates = close.loc[:"2007-12-31"].index
-    monkeypatch.setattr(portfolio, "build_decision_table", lambda *args: pd.DataFrame())
-    _, initial = selection._window_target(pd.DataFrame(), (close, volume, market), cfg, dates)
-    changed = close.copy()
-    changed.loc["2008":, "SPY"] *= 100
-    _, poisoned = selection._window_target(pd.DataFrame(), (changed, volume, market), cfg, dates)
-    assert initial["target_weights"] == poisoned["target_weights"]
-    assert cfg["split"]["train_end"] == "2008-12-31"
+    raw = make_sample_prices(data["tickers"], data["start"], cfg["split"]["train_end"], 12, data["columns"])
+    clean = load_data.clean_data.clean_dataframe(raw, date_column=data["columns"]["date_column"])
+    market = main._market_inputs(clean, cfg)
+    dates = market[0].loc[:"2007-12-31"].index
+    score = market[0].loc["2008-01-01":].index
+    initial, settings = selection._window_target(pd.DataFrame(), market, cfg, dates)
+    poisoned = tuple(frame.copy() for frame in market)
+    for frame in poisoned:
+        frame.loc["2008":] *= 100
+    changed, changed_settings = selection._window_target(pd.DataFrame(), poisoned, cfg, dates)
+    pd.testing.assert_frame_equal(initial, changed)
+    assert not initial.dropna(subset=[cfg["problem"]["target_column"]]).empty
+    assert initial.index.max() <= dates[-1]
+    assert settings["target_weights"] == changed_settings["target_weights"]
+    eligible, _, _, _ = selection._prepare_window(pd.DataFrame(), market, cfg, (dates, score))
+    altered, _, _, _ = selection._prepare_window(pd.DataFrame(), poisoned, cfg, (dates, score))
+    pd.testing.assert_frame_equal(eligible, altered)
+    cfg["selection"]["first_train_end"] = "2007-12-31"
+    prepared = selection._prepared_windows(pd.DataFrame(), market, cfg)
+    assert len(prepared) == 1
+    assert not prepared[0][0].empty
