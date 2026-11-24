@@ -208,7 +208,7 @@ def _period(cfg: dict, period_name: str) -> tuple[str, str]:
     ends = {"validation": ("train_end", "val_end"), "test": ("val_end", "test_end")}
     if period_name not in ends:
         raise ValueError(f"Unknown period {period_name!r}. Use 'validation' or 'test'.")
-    previous_end, end = (cfg["split"][key] for key in ends[split])
+    previous_end, end = (cfg["split"][key] for key in ends[period_name])
     start = pd.Timestamp(previous_end) + pd.Timedelta(days=1)
     return str(start.date()), end
 
