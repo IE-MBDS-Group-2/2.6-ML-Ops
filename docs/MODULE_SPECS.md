@@ -715,7 +715,7 @@ def holm_adjust(p_values: dict[str, float]) -> dict[str, float]
 
 ```python
 def resolve_target(method: str, cfg: dict, train_returns: pd.DataFrame | None) -> pd.Series
-def target_fit(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None) -> dict
+def target_explanation(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None) -> dict
     # {"fallback": bool, "reason": str, "expected_tracking_error": float}; train_returns needed for any
     # target that is not the policy mix (ex-ante tracking error to the policy weights)
 def resolve_policy(method: str, model: Pipeline | None, target: pd.Series, decisions: pd.DatetimeIndex,

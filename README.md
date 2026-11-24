@@ -272,6 +272,12 @@ A retrained model must pass the gate again before it takes the `prod` alias. If 
 ### Who owns it
 At the firm: the quant analyst runs and monitors it, portfolio managers decide, IT keeps the infrastructure running. In this project: the module owners in the table at the end of this file. Ricardo Arciniegas owns the data snapshot and Miguel Palanca owns the release.
 
+### Version served
+| Item | Value |
+| --- | --- |
+| Served now | `GET /health` reports it: `version` (the release tag baked into the image, such as `v1.0.2`), `commit` (the exact commit), and `model_version` (`local:model.joblib`, a W&B name and alias such as `etf-rebalancing-model:prod`, or `rule` when no approved model is loaded) |
+| How it changes | Publishing a release builds the image and moves `:release`; the host pulls it. A rollback moves `:release` back to an earlier tag's image. Both are in "Releases and rollback" below |
+
 ## Install
 ```bash
 conda env create -f environment.yml
@@ -416,6 +422,62 @@ Five ideas, in the order I would take them. Each says what it is, why it is not 
 **A stronger agent.** *What:* a richer reinforcement learning agent, for example more than three actions or a better reward. *Why not now:* there are only about 950 weekly decisions, the half step is never the best action (0% of the train weeks, gap 14), and even perfect foresight with these three actions reduces drawdown by only 0.0044 (gap 7), so a bigger model on the same actions has little to gain. *First step:* change the action set first, for example rebalancing back to the edge of the tolerance band instead of halfway, and rerun the feasibility check before training anything larger.
 
 **Named portfolios.** *What:* several model portfolios, such as conservative, balanced and growth, each with its own targets, thresholds and gate. *Why not now:* each one needs its own target weights, labels, model and gate result, and the `prod` alias holds one model. The API request already has an optional `portfolio_id`, but nothing uses it to choose a model yet. *First step:* make a second configuration (target weights and gate) for one more portfolio, run the pipeline for it, and give its model its own alias.
+
+## Tools
+The course defaults, and where this project differs.
+
+| Area | Course default | This project |
+| --- | --- | --- |
+| Hosting | Render | Self-hosted. The release workflow pushes the image to GHCR (`ghcr.io/ie-mbds-group-2/etf-rebalancing-api`) and the host pulls `:release`, tests a canary, then switches. Runbook: `docs/DEPLOY.md` |
+| Data versioning | DVC with DagsHub | Not set up: the price snapshot is shared directly and checked by its SHA-256 (model card, "Data"). Whether to adopt DVC and DagsHub is an open decision |
+| Experiment tracking and model registry | Weights & Biases | Weights & Biases, as the course default (project `etf-rebalancing`, alias `prod`) |
+| CI | GitHub Actions | GitHub Actions, with a merge queue on `dev` |
+
+## Releases and rollback
+A release is a GitHub Release on a tag from `main`. A guard (`release-guard.yml`) refuses a full release whose commit is not on `main`; a pre-release (a dry run from `dev`) skips that check. A rollback is a manual run of the deploy workflow from an earlier tag: it moves `:release` to that tag's existing image, with no rebuild.
+
+| Tag | Date | What changed | Rollback target and reason |
+| --- | --- | --- | --- |
+| v1.1.0 (to come) | to come | Stage 3: benchmarks, grid search, monitoring and drift alert, calculated targets, self-hosted GHCR deploy | v1.0.2, if the live checks fail after the switch; the image must exist in GHCR |
+| v1.1.0-rc1 (pre-release) | 2026-11-19 | Dry run from `dev` of the GHCR deploy, not a release | None: nothing was served to users. Delete it after the dry run |
+| v1.0.2 | 2026-11-11 | Typed functions, config column names, fixes for contract probes | v1.0.1, if the typed or config-driven modules misbehave |
+| v1.0.1 | 2026-11-11 | Hardened module contracts, removed tracked data placeholders | v1.0.0, if a hardened contract rejects valid input |
+| v1.0.0 | 2026-11-11 | First release: the offline pipeline (load, validate, clean, features, model, evaluation, portfolio and costs), no API yet | None: the first release |
+
+The v1.0.x tags came before the GHCR deploy, so no image exists for them: rolling back to one means publishing a new release from that tag's commit. Only tags released through `deploy.yml` (from `v1.1.0` on) can be rolled back to in one step.
+
+## Changelog
+All notable changes, one entry per tag, in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
+
+### [Unreleased]
+- Final-rubric work: the API forbids extra fields, the release guard, this README's release sections.
+
+### [1.1.0] - to come
+Stage 3, to be listed when it is cut. So far on `dev`: benchmarks, grid search and walk-forward selection, review frequency from config, monitoring with a drift alert, calculated allocation targets, retrain workflow, CI house rules, smoke test and the GHCR deploy.
+
+### [1.1.0-rc1] - 2026-11-19
+A dry run from `dev`, not a release.
+#### Added
+- The deploy workflow: build once, push to GHCR, host pulls `:release`, smoke test of the live service.
+
+### [1.0.2] - 2026-11-11
+#### Changed
+- Every function typed; calendar constants named; column names read from config.
+#### Fixed
+- Validate, clean and train pass the grader's contract probes on non-price data.
+
+### [1.0.1] - 2026-11-11
+#### Changed
+- Module contracts hardened.
+#### Removed
+- Tracked data placeholders.
+
+### [1.0.0] - 2026-11-11
+#### Added
+- The first release: the offline pipeline (data checks, features, the classifier and quality gate, portfolio and costs). No API or Docker image yet.
+
+## Business video
+Link to come: *(placeholder)*
 
 ## Repo structure
 ```text
