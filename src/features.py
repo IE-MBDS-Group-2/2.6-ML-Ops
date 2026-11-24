@@ -101,6 +101,17 @@ def compute_market_features(
     return output
 
 
+def dates_with_every_feature(market: pd.DataFrame) -> pd.DatetimeIndex:
+    """The dates on which every market feature has a value.
+
+    Inputs:  market, the market features indexed by date (from compute_market_features).
+    Outputs: the dates with no missing feature.
+    Why:     the longest lookback (the 12-week return, the 20-day volatility) needs history, so the first days
+             of any price file have gaps; decisions can only start where every feature exists.
+    """
+    return market.dropna().index
+
+
 def get_feature_preprocessor(numeric_columns: list[str]) -> compose.ColumnTransformer:
     """Build an unfitted numeric imputation and scaling recipe.
 

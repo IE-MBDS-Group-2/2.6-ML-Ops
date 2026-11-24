@@ -74,6 +74,18 @@ def _drop_rows_without_target(df: pd.DataFrame, target_column: str) -> pd.DataFr
     return kept
 
 
+def drop_unlabelled_rows(table: pd.DataFrame, target_column: str) -> pd.DataFrame:
+    """Drop the decision dates that have no best_action label yet, and log how many.
+
+    Inputs:  table, the decision table; target_column, the label column (problem.target_column).
+    Outputs: the rows that have a label.
+    Why:     the last decisions of the history have no future window to label, so they cannot train or score
+             a model; they are dropped here, named for what goes, instead of with a bare dropna in main.py.
+    Raises:  ValueError if the label column is absent.
+    """
+    return _drop_rows_without_target(table, target_column)
+
+
 def _tidy_name(name: object) -> str:
     """One spelling for a column name: no outer spaces, lowercase, underscores (" Close Price " -> close_price)."""
     return str(name).strip().lower().replace(" ", "_")

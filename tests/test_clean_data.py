@@ -137,3 +137,18 @@ def test_unit_clean_dataframe_matches_configured_names_after_tidying():
     clean = clean_data.clean_dataframe(raw, date_column="Date", sort_by=["Date", "Ticker"])
     assert pd.api.types.is_datetime64_any_dtype(clean["date"])
     assert clean["close"].tolist() == [1.0, 2.0]
+
+
+def test_unit_drop_unlabelled_rows_keeps_only_rows_with_a_label(caplog):
+    """The decisions with no best_action yet are dropped, and the count is logged."""
+    table = pd.DataFrame({"best_action": [0.0, 0.5, None], "x": [1, 2, 3]})
+    with caplog.at_level("WARNING", logger="src.clean_data"):
+        kept = clean_data.drop_unlabelled_rows(table, "best_action")
+    assert kept["x"].tolist() == [1, 2]
+    assert "missing-best_action" in caplog.text
+
+
+def test_unit_drop_unlabelled_rows_needs_the_label_column():
+    """A table without the label column is an error that names the setting to check."""
+    with pytest.raises(ValueError, match="problem.target_column"):
+        clean_data.drop_unlabelled_rows(pd.DataFrame({"x": [1]}), "best_action")

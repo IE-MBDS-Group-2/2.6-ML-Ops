@@ -113,3 +113,10 @@ def test_integration_preprocessor_training_only_and_column_width():
     assert np.isfinite(transformed).all()
     np.testing.assert_array_equal(steps["imputer"].statistics_, medians)
     np.testing.assert_array_equal(steps["scaler"].mean_, means)
+
+
+def test_unit_dates_with_every_feature_skips_the_days_with_a_gap():
+    """Only the dates on which no market feature is missing are returned."""
+    market = pd.DataFrame({"a": [np.nan, 1.0, 2.0], "b": [np.nan, np.nan, 3.0]},
+                          index=pd.date_range("2024-01-01", periods=3))
+    assert list(features.dates_with_every_feature(market)) == [pd.Timestamp("2024-01-03")]

@@ -80,6 +80,7 @@ def _check_columns_and_rows(df: pd.DataFrame, required_columns: list[str], cols:
 def _check_price_table(df: pd.DataFrame, cols: dict[str, str], tickers: list[str] | None,
                        max_abs_daily_return: float | None) -> None:
     """Price-table rules (one row per date and ticker); cols maps date, ticker, close, volume to column names."""
+    _check_column_types(df, cols)
     _check_one_row_per_date_ticker(df, cols)
     if tickers is not None:
         _check_tickers_present(df, cols, tickers)
@@ -97,6 +98,31 @@ def _check_target(df: pd.DataFrame, target_column: str) -> None:
     if empty:
         raise ValueError(f"{empty} rows have no value in target column '{target_column}'. "
                          "Drop them in clean_dataframe (training mode) or fix the source data.")
+
+
+def _check_column_types(df: pd.DataFrame, cols: dict[str, str]) -> None:
+    """Raise, naming the column and the type found, if a price column has the wrong type.
+
+    The rules: date is a date, ticker is text, close and volume are numbers.
+
+    Inputs:  df, the clean long table; cols, the configured price column names.
+    Outputs: None when the four types are right.
+    Why:     a price read as text (one bad cell turns the whole column into text) or a date left as text would
+             otherwise fail later with a pandas error far from the cause, or sort and compare wrongly.
+    """
+    wrong = [(cols["date_column"], "dates (datetime)", pd.api.types.is_datetime64_any_dtype),
+             (cols["ticker_column"], "text", _is_text),
+             (cols["close_column"], "numbers", pd.api.types.is_numeric_dtype),
+             (cols["volume_column"], "numbers", pd.api.types.is_numeric_dtype)]
+    for column, expected, is_right in wrong:
+        if pd.api.types.is_bool_dtype(df[column]) or not is_right(df[column]):
+            raise ValueError(f"Column '{column}' must hold {expected}, but its type is {df[column].dtype}. "
+                             "Check the raw file for stray text in the column and clean_dataframe's date step.")
+
+
+def _is_text(values: pd.Series) -> bool:
+    """True when every non-missing value in the column is a string."""
+    return pd.api.types.is_string_dtype(values) and values.dropna().map(lambda item: isinstance(item, str)).all()
 
 
 def _first_row(rows: pd.DataFrame, cols: dict[str, str] | None) -> str:

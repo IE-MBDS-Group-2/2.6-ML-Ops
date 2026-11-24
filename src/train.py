@@ -20,7 +20,7 @@ import logging
 
 import numpy as np
 import pandas as pd
-from sklearn.base import clone
+from sklearn.base import BaseEstimator, clone
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.pipeline import Pipeline
@@ -30,22 +30,43 @@ logger = logging.getLogger(__name__)
 SUPPORTED_PROBLEM_TYPES = ("classification", "regression")
 
 
-# Subclassing LogisticRegression inherits sklearn's own deep class tree, hence the ancestors waiver.
-class ActionClassifier(LogisticRegression):  # pylint: disable=too-many-ancestors
-    """LogisticRegression that accepts the fractional action labels 0.0, 0.5 and 1.0.
+class ActionClassifier(BaseEstimator):
+    """Logistic regression that accepts the fractional action labels 0.0, 0.5 and 1.0.
 
-    Why: sklearn reads float labels such as 0.5 as a continuous (regression) target and refuses to fit a
-    classifier. We fit on class codes 0, 1, 2 and put the real labels back in classes_, so predict returns
-    0.0 / 0.5 / 1.0 and predict_proba columns follow classes_. Same parameters as LogisticRegression.
+    Inputs:  the LogisticRegression settings the project uses: C, class_weight, max_iter, solver, random_state.
+    Outputs: an estimator with fit, predict, predict_proba and classes_ (the real labels, in column order).
+    Why:     sklearn reads float labels such as 0.5 as a continuous (regression) target and refuses to fit a
+             classifier. This wraps a LogisticRegression fitted on class codes 0, 1, 2 and puts the real labels
+             back, so predict returns 0.0 / 0.5 / 1.0. It wraps instead of subclassing, so it does not inherit
+             sklearn's deep class tree.
     """
 
+    def __init__(self, C: float = 1.0, class_weight: dict | str | None = None, max_iter: int = 100,
+                 solver: str = "lbfgs", random_state: int | None = None) -> None:
+        """Store the settings; nothing is fitted yet (the fitted parts are filled in by fit)."""
+        self.C = C
+        self.class_weight = class_weight
+        self.max_iter = max_iter
+        self.solver = solver
+        self.random_state = random_state
+        self.classes_ = None
+        self.model_ = None
+
     def fit(self, X: pd.DataFrame, y: pd.Series, sample_weight: np.ndarray | None = None) -> ActionClassifier:
-        """Fit on class codes, then put the real action labels back in classes_; returns self."""
+        """Fit on class codes, then keep the real action labels in classes_; returns self."""
         labels, codes = np.unique(np.asarray(y), return_inverse=True)
-        super().fit(X, codes, sample_weight=sample_weight)
-        # sklearn convention: fitted attributes (trailing _) are set in fit, never in __init__.
-        self.classes_ = labels  # pylint: disable=attribute-defined-outside-init
+        self.model_ = LogisticRegression(**self.get_params())
+        self.model_.fit(X, codes, sample_weight=sample_weight)
+        self.classes_ = labels
         return self
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        """The most likely action label for every row."""
+        return self.classes_[self.model_.predict(X)]
+
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        """One probability per action; the columns follow classes_."""
+        return self.model_.predict_proba(X)
 
 
 def _check_inputs(X_train: pd.DataFrame, y_train: pd.Series, problem_type: str, model_params: dict) -> None:

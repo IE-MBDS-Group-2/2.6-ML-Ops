@@ -2,13 +2,13 @@
 main.py  [Step 0: ORCHESTRATOR]
 ================================
 Purpose   Run the whole pipeline, in order, with one command: python -m src.main
-Owns      Step order, the date-based split, passing data between steps
-Never     Config parsing (config.py), logging set-up details (logger.py), or any cleaning, feature or model
-          logic. main.py only CALLS other modules
+Owns      Step order, passing data between steps
+Never     Config parsing (config.py), logging set-up details (logger.py), or any cleaning, split, feature or
+          model logic. main.py only CALLS other modules
 
 Flow
     config.yaml + .env -> tracking (start run) -> load_data -> clean_data -> validate -> to_wide -> features
-      -> portfolio (decision table) -> _split_by_date (train / validation / test sealed)
+      -> portfolio (decision table) -> split.split_by_date (train / validation / test sealed)
       -> train (model.type: the classifier, or the reinforcement learning agent: 5 seeds, the median one)
       -> evaluate: quality gate, guards and rule challengers (validation)
            gate met:     test audit once -> save model -> register it (tracking)
@@ -29,14 +29,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
 from src import (allocation, benchmarks, clean_data, config, evaluate,
                  features, infer, load_data)
 from src import logger as log_setup
-from src import (portfolio, rl_agent, robustness, rules, selection, tracking,
-                 trades, train, utils)
+from src import (portfolio, rl_agent, robustness, rules, selection, split,
+                 tracking, trades, train, utils)
 
 logger = logging.getLogger(__name__)
 
@@ -46,64 +45,14 @@ CONFIG_PATH = config.CONFIG_PATH
 
 def split_data(X: pd.DataFrame, y: pd.Series, test_size: float, val_size: float,
                random_state: int, stratify: bool) -> tuple:
-    """Course contract: random split into train, validation and test.
+    """Course contract: random split into train, validation and test (the work is in split.split_data).
 
-    Inputs:  X, y; test_size and val_size as shares of the WHOLE dataset; random_state;
-             stratify (keep class shares in every split, classification only).
+    Inputs:  X, y; test_size and val_size as shares of the WHOLE dataset; random_state; stratify.
     Outputs: (X_train, X_val, X_test, y_train, y_val, y_test).
-    Why:     kept and tested for the course contract. Our pipeline uses _split_by_date instead,
-             because a random split of weekly decisions would leak future prices
-             (TEAM_BRIEF Decisions).
-    Raises:  ValueError for sizes outside (0, 1), sizes that sum to 1 or more, or X and y of
-             different lengths.
+    Why:     the course contract names main.split_data; the pipeline itself splits by date (split.split_by_date).
+    Raises:  ValueError, as split.split_data.
     """
-    if not (0 < test_size < 1 and 0 < val_size < 1) or test_size + val_size >= 1:
-        raise ValueError(
-            f"test_size ({test_size}) and val_size ({val_size}) must each be between 0 and 1 "
-            "and sum to less than 1."
-        )
-    if len(X) != len(y):
-        raise ValueError(f"X and y must have the same number of rows, got {len(X)} and {len(y)}.")
-    # Exact row counts, not fractions: 0.15 / 0.85 * 85 is 15.000000000000002, which sklearn
-    # rounds up to 16.
-    X_rest, X_test, y_rest, y_test = train_test_split(
-        X, y, test_size=round(test_size * len(X)), random_state=random_state,
-        stratify=y if stratify else None,
-    )
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_rest, y_rest, test_size=round(val_size * len(X)), random_state=random_state,
-        stratify=y_rest if stratify else None,
-    )
-    logger.info("Split %d rows into train %d, validation %d, test %d",
-                len(X), len(X_train), len(X_val), len(X_test))
-    return X_train, X_val, X_test, y_train, y_val, y_test
-
-
-def _split_by_date(table: pd.DataFrame, train_end: str, val_end: str) -> tuple:
-    """Split the decision table by date: train to train_end, validation to val_end, test after.
-
-    Inputs:  table indexed by decision date (DatetimeIndex); train_end and val_end as YYYY-MM-DD,
-             both inclusive.
-    Outputs: (train, validation, test) DataFrames; every row is in exactly one of them.
-    Why:     the model is judged on later years than it learned from, as it would be in operation.
-    Raises:  ValueError if the index is not dates, val_end is not after train_end, or a split
-             is empty.
-    """
-    if not isinstance(table.index, pd.DatetimeIndex):
-        raise ValueError("_split_by_date needs a table indexed by date (DatetimeIndex).")
-    train_cut, val_cut = pd.Timestamp(train_end), pd.Timestamp(val_end)
-    if val_cut <= train_cut:
-        raise ValueError(
-            f"val_end ({val_end}) must be after train_end ({train_end}) in config.yaml.")
-    train_rows = table[table.index <= train_cut]
-    val_rows = table[(table.index > train_cut) & (table.index <= val_cut)]
-    test_rows = table[table.index > val_cut]
-    for name, part in (("train", train_rows), ("validation", val_rows), ("test", test_rows)):
-        if part.empty:
-            raise ValueError(f"The {name} split is empty. Check the split dates in config.yaml.")
-    logger.info("Date split: train %d, validation %d, test %d rows",
-                len(train_rows), len(val_rows), len(test_rows))
-    return train_rows, val_rows, test_rows
+    return split.split_data(X, y, test_size, val_size, random_state, stratify)
 
 
 def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
@@ -145,8 +94,8 @@ def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
     Why:     the test years are split off here and never touched again: they stay sealed.
     """
     target_column = cfg["problem"]["target_column"]
-    labelled = table.dropna(subset=[target_column])
-    train_rows, val_rows, _sealed_test = _split_by_date(
+    labelled = clean_data.drop_unlabelled_rows(table, target_column)
+    train_rows, val_rows, _sealed_test = split.split_by_date(
         labelled, cfg["split"]["train_end"], cfg["split"]["val_end"])
     columns = _feature_columns(table, cfg)
     model = train.train_model(
@@ -368,7 +317,7 @@ def _recommendations(model: Pipeline | None, columns: list[str], cfg: dict) -> p
     """
     clean = load_data.load_prices(PROJECT_ROOT / cfg["paths"]["inference_data"], cfg)
     close_wide, volume_wide, market = _market_inputs(clean, cfg)
-    ready = market.dropna().index
+    ready = features.dates_with_every_feature(market)
     if ready.empty:
         raise ValueError(
             "The inference file is too short to compute the market features. "
@@ -456,7 +405,7 @@ def _write_robustness(model: Pipeline, columns: list[str], market_data: tuple, c
     Why: Record diagnostics without using them to change the validation gate or release decision.
     """
     validation_end = cfg["split"]["val_end"]
-    history = tuple(frame.loc[:validation_end] for frame in market_data)
+    history = split.up_to_date(market_data, validation_end)
     ceiling = robustness.feasibility_ceiling(
         history, _target_weights(cfg), cfg, cfg["portfolio"]["first_decision_date"], validation_end)
 
@@ -487,8 +436,8 @@ def _select_model_params(table: pd.DataFrame, market_data: tuple, cfg: dict,
     if not cfg["selection"]["enabled"]:
         return cfg
     cutoff = cfg["split"]["train_end"]
-    training_market = tuple(frame.loc[:cutoff] for frame in market_data)
-    best, trials = selection.grid_search(table.loc[:cutoff], training_market, cfg, tracker)
+    training_market = split.up_to_date(market_data, cutoff)
+    best, trials = selection.grid_search(split.up_to_date(table, cutoff), training_market, cfg, tracker)
     utils.save_csv(trials, paths["selection"])
     comparison = selection.frequency_comparison(market_data, cfg, best)
     utils.save_csv(comparison, paths["frequency_comparison"])
