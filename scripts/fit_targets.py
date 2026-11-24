@@ -15,7 +15,15 @@ logger = logging.getLogger(__name__)
 
 
 def _last_scalar(node: yaml.Node) -> yaml.Node:
-    """Locate the final scalar so following YAML comments remain outside the replacement."""
+    """Locate the final scalar so following YAML comments remain outside the replacement.
+
+    Inputs:
+        node: a parsed YAML node (mapping, sequence or scalar).
+    Outputs:
+        The last scalar node reached by always following the last entry; the node itself if it is empty or a scalar.
+    Why:
+        Its end line marks where a replaced block stops, so comments after it are not overwritten.
+    """
     if isinstance(node, yaml.MappingNode) and node.value:
         return _last_scalar(node.value[-1][1])
     if isinstance(node, yaml.SequenceNode) and node.value:
@@ -24,7 +32,17 @@ def _last_scalar(node: yaml.Node) -> yaml.Node:
 
 
 def _generated_edits(targets: yaml.MappingNode, generated: dict) -> list:
-    """Locate generated fields while leaving unrelated settings and their comments in place."""
+    """Locate generated fields while leaving unrelated settings and their comments in place.
+
+    Inputs:
+        targets: the parsed target_weights mapping node of the config.
+        generated: new top-level fields for that mapping, name -> data (here "calculated" and "fit").
+    Outputs:
+        A list of (first line, end line, YAML text) edits, with 0-based line numbers. Fields already
+        present are replaced; missing ones are inserted together after the last line of the mapping.
+    Why:
+        Only the generated blocks change, so the reviewed settings and comments around them stay as written.
+    """
     edits, missing = [], {}
     for name, data in generated.items():
         stored = next(((key, value) for key, value in targets.value if key.value == name), None)
@@ -41,7 +59,17 @@ def _generated_edits(targets: yaml.MappingNode, generated: dict) -> list:
 
 
 def _yaml_with_targets(source: str, generated: dict, provenance: str) -> str:
-    """Replace generated mappings through their last scalar and preserve surrounding YAML."""
+    """Replace generated mappings through their last scalar and preserve surrounding YAML.
+
+    Inputs:
+        source: the full text of the config file.
+        generated: new fields for target_weights, name -> data.
+        provenance: text written as comment lines under the "calculated:" line (checksum and date range).
+    Outputs:
+        The config text with the generated blocks replaced or added, indented under target_weights.
+    Why:
+        Rewriting by line keeps the comments and layout of the reviewed file, which a plain YAML dump would lose.
+    """
     targets = next(value for key, value in yaml.compose(source).value if key.value == "target_weights")
     lines = source.splitlines(keepends=True)
     for start, end, text in sorted(_generated_edits(targets, generated), reverse=True):
@@ -53,7 +81,21 @@ def _yaml_with_targets(source: str, generated: dict, provenance: str) -> str:
 
 
 def fit_targets(config_path: Path, prices_path: Path) -> dict:
-    """Fit train-window targets from one frozen snapshot and atomically update its config file."""
+    """Fit train-window targets from one frozen snapshot and atomically update its config file.
+
+    Inputs:
+        config_path: the YAML config to read and update (its target_weights section is rewritten).
+        prices_path: the frozen price snapshot (CSV) the targets are fitted on.
+    Outputs:
+        The fitted weights, method -> {ticker: weight}. The config file is replaced with the new
+        "calculated" and "fit" blocks, which carry the snapshot SHA-256.
+    Why:
+        The targets come from the training window only and record which snapshot made them. The write goes
+        through a validated temporary file, and stops if the snapshot or the config changed meanwhile.
+
+    Raises:
+        ValueError: if the snapshot or the config changes during fitting, or the new config fails validation.
+    """
     cfg = config.load_config(config_path, validate_calculated=False)
     source = config_path.read_text(encoding="utf-8")
     checksum = hashlib.sha256(prices_path.read_bytes()).hexdigest()
@@ -98,7 +140,16 @@ def fit_targets(config_path: Path, prices_path: Path) -> dict:
 
 
 def main() -> None:
-    """Refit every allocation target from the configured snapshot or an explicit input path."""
+    """Refit every allocation target from the configured snapshot or an explicit input path.
+
+    Inputs:
+        None. Reads --config (default config.CONFIG_PATH) and --prices (default: paths.raw_data in the config)
+        from the command line.
+    Outputs:
+        None. Updates the config file; on a KeyError, OSError or ValueError it exits with status 1 and a message.
+    Why:
+        It is the command-line entry point, so a refit is one command and a failure is a clear message.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=config.CONFIG_PATH)
     parser.add_argument("--prices", type=Path, help="override paths.raw_data with a local snapshot")

@@ -59,13 +59,24 @@ def clean_dataframe(df_raw: pd.DataFrame, target_column: str | None = None, date
 
 
 def _sorted(df: pd.DataFrame, sort_by: list[str] | None) -> pd.DataFrame:
-    """Sort on the sort_by columns that exist (names tidied first); no sort_by leaves the order as it is."""
+    """Sort on the sort_by columns that exist (names tidied first); no sort_by leaves the order as it is.
+
+    Inputs: df, the table to order; sort_by, column names from config data.columns, or None.
+    Outputs: df sorted on those columns, or df itself when none of them exist.
+    Why: A stable order makes later steps and their outputs reproducible.
+    """
     order = [name for name in map(_tidy_name, sort_by or []) if name in df.columns]
     return df.sort_values(order) if order else df
 
 
 def _drop_rows_without_target(df: pd.DataFrame, target_column: str) -> pd.DataFrame:
-    """Training mode: drop rows with no target value, and log how many; raise if the column is absent."""
+    """Training mode: drop rows with no target value, and log how many; raise if the column is absent.
+
+    Inputs: df, the table; target_column, the label column name (problem.target_column).
+    Outputs: The rows where the target column has a value.
+    Why: Rows without a label cannot train or score a model, and the count is logged so nothing vanishes silently.
+    Raises: ValueError if target_column is not in df.
+    """
     if target_column not in df.columns:
         raise ValueError(f"Target column '{target_column}' is missing. "
                          "Check problem.target_column in config.yaml.")
@@ -87,12 +98,22 @@ def drop_unlabelled_rows(table: pd.DataFrame, target_column: str) -> pd.DataFram
 
 
 def _tidy_name(name: object) -> str:
-    """One spelling for a column name: no outer spaces, lowercase, underscores (" Close Price " -> close_price)."""
+    """One spelling for a column name: no outer spaces, lowercase, underscores (" Close Price " -> close_price).
+
+    Inputs: name, a column name of any type.
+    Outputs: The name as a tidy string.
+    Why: Config names and file headers then match whatever capitalisation or spacing the file used.
+    """
     return str(name).strip().lower().replace(" ", "_")
 
 
 def _log_dropped(kind: str, before: int, after: int) -> None:
-    """Warn when rows were dropped, with the counts before and after, so nothing vanishes silently."""
+    """Warn when rows were dropped, with the counts before and after, so nothing vanishes silently.
+
+    Inputs: kind, a label for the rows (e.g. "exact duplicate"); before and after, the row counts around the drop.
+    Outputs: None; writes one warning line if rows were dropped, otherwise one info line.
+    Why: Every dropped row is accounted for in the log.
+    """
     if after < before:
         logger.warning("Dropped %d %s rows: %d before, %d after", before - after, kind, before, after)
     else:

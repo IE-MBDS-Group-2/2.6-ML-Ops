@@ -43,7 +43,12 @@ class ActionClassifier(BaseEstimator):
 
     def __init__(self, C: float = 1.0, class_weight: dict | str | None = None, max_iter: int = 100,
                  solver: str = "lbfgs", random_state: int | None = None) -> None:
-        """Store the settings; nothing is fitted yet (the fitted parts are filled in by fit)."""
+        """Store the settings; nothing is fitted yet (the fitted parts are filled in by fit).
+
+        Inputs: C, class_weight, max_iter, solver and random_state, passed to the LogisticRegression inside.
+        Outputs: None; classes_ and model_ stay None until fit runs.
+        Why: sklearn's clone and get_params need every setting stored under its own name.
+        """
         self.C = C
         self.class_weight = class_weight
         self.max_iter = max_iter
@@ -53,7 +58,12 @@ class ActionClassifier(BaseEstimator):
         self.model_ = None
 
     def fit(self, X: pd.DataFrame, y: pd.Series, sample_weight: np.ndarray | None = None) -> ActionClassifier:
-        """Fit on class codes, then keep the real action labels in classes_; returns self."""
+        """Fit on class codes, then keep the real action labels in classes_; returns self.
+
+        Inputs: X, the features; y, the action labels (0.0, 0.5, 1.0); sample_weight, optional weight per row.
+        Outputs: self, fitted; classes_ holds the sorted real labels.
+        Why: The inner LogisticRegression only sees the codes 0, 1, 2, which sklearn accepts as classes.
+        """
         labels, codes = np.unique(np.asarray(y), return_inverse=True)
         self.model_ = LogisticRegression(**self.get_params())
         self.model_.fit(X, codes, sample_weight=sample_weight)
@@ -61,16 +71,33 @@ class ActionClassifier(BaseEstimator):
         return self
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
-        """The most likely action label for every row."""
+        """The most likely action label for every row.
+
+        Inputs: X, the features, with the columns used in fit.
+        Outputs: Array with one real action label (0.0, 0.5 or 1.0) per row.
+        Why: Maps the inner model's class codes back to the labels the portfolio code expects.
+        """
         return self.classes_[self.model_.predict(X)]
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
-        """One probability per action; the columns follow classes_."""
+        """One probability per action; the columns follow classes_.
+
+        Inputs: X, the features, with the columns used in fit.
+        Outputs: Array of shape (rows, actions) with one probability per action, columns in classes_ order.
+        Why: Gives the confidence behind each action for the API and for tie-breaking.
+        """
         return self.model_.predict_proba(X)
 
 
 def _check_inputs(X_train: pd.DataFrame, y_train: pd.Series, problem_type: str, model_params: dict) -> None:
-    """Fail fast before fitting: wrong problem type, no rows, X and y of different lengths, seed given twice."""
+    """Fail fast before fitting: wrong problem type, no rows, X and y of different lengths, seed given twice.
+
+    Inputs: X_train and y_train, the training data; problem_type, from config problem.problem_type; model_params,
+        the model.params dict.
+    Outputs: None.
+    Why: A clear message here is better than an error from deep inside sklearn.
+    Raises: ValueError for each of the problems above.
+    """
     if problem_type not in SUPPORTED_PROBLEM_TYPES:
         raise ValueError(f"problem_type must be one of {SUPPORTED_PROBLEM_TYPES}, got {problem_type!r}. "
                          "Check problem.problem_type in config.yaml.")
@@ -85,14 +112,25 @@ def _check_inputs(X_train: pd.DataFrame, y_train: pd.Series, problem_type: str, 
 
 
 def _make_estimator(problem_type: str, params: dict, random_state: int) -> ActionClassifier | Ridge:
-    """The estimator for the problem type: ActionClassifier for classification, Ridge for regression."""
+    """The estimator for the problem type: ActionClassifier for classification, Ridge for regression.
+
+    Inputs: problem_type, "classification" or "regression"; params, extra settings from model.params; random_state,
+        the seed.
+    Outputs: An unfitted ActionClassifier or Ridge.
+    Why: One place maps the problem type to the algorithm, so the config can swap them without code changes.
+    """
     if problem_type == "regression":
         return Ridge(random_state=random_state, **params)
     return ActionClassifier(random_state=random_state, **params)
 
 
 def _unfitted_copy(preprocessor: ColumnTransformer | str | None) -> ColumnTransformer | str | None:
-    """A fresh copy to fit, so the caller's recipe stays unfitted; "passthrough" and None have nothing to copy."""
+    """A fresh copy to fit, so the caller's recipe stays unfitted; "passthrough" and None have nothing to copy.
+
+    Inputs: preprocessor, the feature recipe, "passthrough" or None.
+    Outputs: An unfitted clone of the recipe, or the same "passthrough" / None.
+    Why: Fitting the caller's own object would change it, and a recipe reused on another split would leak.
+    """
     return clone(preprocessor) if hasattr(preprocessor, "get_params") else preprocessor
 
 

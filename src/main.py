@@ -60,6 +60,7 @@ def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
 
     Inputs:  clean, the validated long table; cfg, the full config (reads data and features).
     Outputs: (close_wide, volume_wide, market_features), all date x column and on one calendar.
+    Why:     training, validation and inference all build their market tables the same way, from one place.
     """
     tickers, cols = cfg["data"]["tickers"], cfg["data"]["columns"]
     close_wide = clean_data.to_wide(clean, cols["close_column"], tickers, cols["date_column"], cols["ticker_column"])
@@ -71,7 +72,12 @@ def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
 
 
 def _target_weights(cfg: dict) -> pd.Series:
-    """The model portfolio's target weights from config.yaml."""
+    """The model portfolio's target weights from config.yaml.
+
+    Inputs:  cfg, the full config (reads target_weights.method and the stored weights).
+    Outputs: the target weight per ticker, as a Series.
+    Why:     every step uses the same stored target, so it is read in one place.
+    """
     return allocation.stored_target(cfg["target_weights"]["method"], cfg)
 
 
@@ -109,9 +115,19 @@ def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
 
 
 def _model_policy(model: Pipeline, columns: list[str]) -> Callable[[pd.Series], float]:
-    """Wrap the fitted model as a policy: a function from a state row to an action."""
+    """Wrap the fitted model as a policy: a function from a state row to an action.
+
+    Inputs:  model, the fitted model or agent; columns, its feature column names.
+    Outputs: a function that takes one decision-date row and returns the model's action as a float.
+    Why:     portfolio.simulate runs any policy the same way, so the model and today's rule share one simulator.
+    """
     def policy(state_row: pd.Series) -> float:
-        """The model's action for one decision date."""
+        """The model's action for one decision date.
+
+        Inputs:  state_row, one row of the decision table (it must contain the feature columns).
+        Outputs: the predicted action as a float.
+        Why:     it is the form of policy that portfolio.simulate calls on every decision date.
+        """
         return float(model.predict(state_row[columns].to_frame().T.astype(float))[0])
     return policy
 
@@ -181,32 +197,34 @@ def _candidate(table: pd.DataFrame, market_data: tuple, cfg: dict) -> tuple:
     return model, columns, {**scores, "model_type": kind}
 
 
-def _period(cfg: dict, split: str) -> tuple[str, str]:
+def _period(cfg: dict, period_name: str) -> tuple[str, str]:
     """The first and last date of the validation or the test years, from the split section.
 
-    Inputs:  cfg, the full config (reads split and data); split, "validation" or "test".
+    Inputs:  cfg, the full config (reads split and data); period_name, "validation" or "test".
     Outputs: (start, end) as YYYY-MM-DD; start is the day after the previous period ends.
-    Raises:  ValueError for any other split name.
+    Why:     the gate and the test audit need each period's dates from config.yaml alone, never typed twice.
+    Raises:  ValueError for any other period name.
     """
     ends = {"validation": ("train_end", "val_end"), "test": ("val_end", "test_end")}
-    if split not in ends:
-        raise ValueError(f"Unknown period {split!r}. Use 'validation' or 'test'.")
+    if period_name not in ends:
+        raise ValueError(f"Unknown period {period_name!r}. Use 'validation' or 'test'.")
     previous_end, end = (cfg["split"][key] for key in ends[split])
     start = pd.Timestamp(previous_end) + pd.Timedelta(days=1)
     return str(start.date()), end
 
 
 def _validation_paths(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict,
-                      split: str = "validation") -> tuple:
+                      period_name: str = "validation") -> tuple:
     """Run the model and today's rule over one period through the same simulate.
 
     Inputs:  model and its feature columns; market_data (close_wide, volume_wide, market);
-             cfg, the full config (reads portfolio, split and costs); split, "validation" or "test".
+             cfg, the full config (reads portfolio, split and costs); period_name, "validation" or "test".
     Outputs: (agent_daily, baseline_daily), the daily frames of the two runs.
+    Why:     the model and today's rule are compared on the same dates, costs and simulator, so the gap is fair.
     """
     close_wide = market_data[0]
     target = _target_weights(cfg)
-    start, end = _period(cfg, split)
+    start, end = _period(cfg, period_name)
     start = str(close_wide.index[close_wide.index >= pd.Timestamp(start)][0].date())
     rule = portfolio.make_current_rule_policy(target, rules.review_dates(close_wide, start, end, cfg), cfg)
     agent_daily, _ = portfolio.simulate(
@@ -248,21 +266,21 @@ def _portfolio_report(daily: pd.DataFrame, market_data: tuple, cfg: dict) -> dic
     return report
 
 
-def _period_metrics(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, split: str,
+def _period_metrics(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, period_name: str,
                     challenger_values: dict[str, pd.Series] | None = None) -> tuple:
     """The model against today's rule and the simple-rule challengers over one period.
 
-    Inputs:  model and its feature columns; market_data; cfg, the full config; split, "validation" or "test".
+    Inputs:  model and its feature columns; market_data; cfg, the full config; period_name, "validation" or "test".
     Outputs: metrics, challenger table and the daily agent and baseline paths.
              When requested, challenger_values receives the daily challenger values.
     Why:     validation and the one-time test audit are measured by exactly the same code.
     """
-    agent_daily, baseline_daily = _validation_paths(model, columns, market_data, cfg, split)
+    agent_daily, baseline_daily = _validation_paths(model, columns, market_data, cfg, period_name)
     agent, baseline = (_portfolio_report(daily, market_data, cfg) for daily in (agent_daily, baseline_daily))
     value, met = _check_quality_gate(agent, baseline, cfg)
     gate = cfg["quality_gate"]
     metrics = {
-        "split": split, "agent": agent, "baseline": baseline, gate["metric_key"]: value,
+        "split": period_name, "agent": agent, "baseline": baseline, gate["metric_key"]: value,
         "gate": {"comparison": gate["comparison"], "threshold": gate["threshold"], "met": met},
         "guards": evaluate.guard_report(agent, baseline, cfg["guards"]),
     }
@@ -295,6 +313,7 @@ def _numbers(metrics: dict, prefix: str = "") -> dict[str, float]:
 
     Inputs:  metrics, a nested dictionary; prefix, the path so far.
     Outputs: only the numeric leaves (True and False count as 1 and 0); text and lists are left out.
+    Why:     the tracker logs flat name -> number pairs, not nested dictionaries.
     """
     flat = {}
     for key, value in metrics.items():
@@ -367,6 +386,8 @@ def _validation_report(fitted: tuple, market_data: tuple, cfg: dict, paths: dict
              paths; tracker, the tracking run or None.
     Outputs: (metrics, chosen): the metrics dictionary and the name of the selected rule. Also writes the
              challengers table and sends the numbers to the tracker.
+    Why:     validation is the only place the gate, guards and challenger choice are decided, so they are
+             measured together once and the test years stay sealed.
     """
     model, columns, scores = fitted
     metrics, challengers, _daily_paths = _period_metrics(model, columns, market_data, cfg, "validation")
@@ -410,7 +431,13 @@ def _write_robustness(model: Pipeline, columns: list[str], market_data: tuple, c
         history, _target_weights(cfg), cfg, cfg["portfolio"]["first_decision_date"], validation_end)
 
     def run_policy(settings: dict) -> pd.DataFrame:
-        """Return aligned validation values for the selected trading cost settings."""
+        """Return aligned validation values for the selected trading cost settings.
+
+        Inputs:  settings, a config dictionary with the trading cost settings to try (passed on as the cfg).
+        Outputs: a table of daily validation values with columns agent_value and baseline_value.
+        Why:     robustness.cost_sensitivity needs one function from settings to values, to re-run the same
+                 comparison under each cost assumption.
+        """
         agent, baseline = _validation_paths(model, columns, history, settings)
         return pd.DataFrame({"agent_value": agent["value"], "baseline_value": baseline["value"]})
 

@@ -87,7 +87,14 @@ def resolve_target(method: str, cfg: dict, train_returns: pd.DataFrame | None) -
 
 
 def stored_target(method: str, cfg: dict) -> pd.Series:
-    """Read the configured policy or a previously fitted allocation in ticker order."""
+    """Read the configured policy or a previously fitted allocation in ticker order.
+
+    Inputs:  method, target_weights.method; cfg, the full config (reads target_weights.policy, .calculated and
+             data.tickers).
+    Outputs: weights per ticker, in config ticker order.
+    Why:     serving and walk-forward scoring use the weights stored at refit time instead of refitting on live data.
+    Raises:  ValueError for an unknown method, or when no weights are stored for it.
+    """
     _check_choice(TARGET_KEY, method)
     settings = cfg["target_weights"]
     weights = settings["policy"] if method == "policy" else settings.get("calculated", {}).get(method)
@@ -116,7 +123,14 @@ def _check_fit_inputs(target: pd.Series, tickers: list[str], train_returns: pd.D
 
 
 def _target_tracking_error(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None) -> float:
-    """Use training returns during fitting, or the reviewed training-risk estimate during serving."""
+    """Use training returns during fitting, or the reviewed training-risk estimate during serving.
+
+    Inputs:  target, the weights in use; cfg, the full config (reads data.tickers, target_weights.policy,
+             .calculated and .fit.tracking_error); train_returns, daily training returns or None.
+    Outputs: the ex-ante annual tracking error of the target against the policy mix, as a fraction.
+    Why:     serving has no training returns, so it reads the estimate stored with the reviewed weights.
+    Raises:  ValueError from _check_fit_inputs when the returns are needed and do not cover the tickers.
+    """
     tickers = cfg["data"]["tickers"]
     policy = pd.Series(cfg["target_weights"]["policy"], dtype=float).reindex(tickers)
     if train_returns is None:
@@ -131,13 +145,23 @@ def _target_tracking_error(target: pd.Series, cfg: dict, train_returns: pd.DataF
 
 
 def model_target(cfg: dict) -> dict:
-    """Describe the target used to train a model, stored inside its joblib artifact."""
+    """Describe the target used to train a model, stored inside its joblib artifact.
+
+    Inputs:  cfg, the full config (reads target_weights).
+    Outputs: {"method": name, "weights": ticker -> weight} for the configured target.
+    Why:     the artifact records which target it was trained for, so serving can refuse a mismatch.
+    """
     method = cfg["target_weights"]["method"]
     return {"method": method, "weights": stored_target(method, cfg).to_dict()}
 
 
 def model_target_matches(model: object, cfg: dict) -> bool:
-    """Only serve artifacts with recorded training weights that match the current target."""
+    """Only serve artifacts with recorded training weights that match the current target.
+
+    Inputs:  model, the loaded artifact; cfg, the full config.
+    Outputs: True when the model's target_metadata_ equals model_target(cfg); False when it is missing or differs.
+    Why:     a model trained for other weights would decide for a target it never learned.
+    """
     return getattr(model, "target_metadata_", None) == model_target(cfg)
 
 

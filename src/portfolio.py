@@ -24,7 +24,7 @@ Tests     tests/test_portfolio.py
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import numpy as np
 import pandas as pd
@@ -42,19 +42,33 @@ _PERIODS_PER_YEAR = {"daily": 252, "weekly": 52, "monthly": 12}      # reviews i
 
 
 def _check_review(review: str) -> None:
-    """Raise if review is not one of config.ALLOWED_VALUES for rebalancing.review."""
+    """Raise if review is not one of config.ALLOWED_VALUES for rebalancing.review.
+
+    Inputs:  review, a review frequency string (daily, weekly or monthly).
+    Outputs: None; raises ValueError when review is not allowed.
+    Why:     a typo in config.yaml should name the key and the allowed values, not fail on a later lookup.
+    Raises:  ValueError if review is not daily, weekly or monthly.
+    """
     if review not in _REVIEWS:
         raise ValueError(f"rebalancing.review is {review!r}. Use one of {', '.join(_REVIEWS)} in config.yaml.")
 
 
 def review_frequency(cfg: dict) -> str:
-    """The review frequency of a run: rebalancing.review from config (daily, weekly or monthly)."""
+    """The review frequency of a run: rebalancing.review from config (daily, weekly or monthly).
+
+    Inputs:  cfg, the full config (reads rebalancing.review).
+    Outputs: the review frequency string.
+    Why:     one reader for the setting, so every module takes the frequency from the same place.
+    """
     return cfg["rebalancing"]["review"]
 
 
 def periods_per_year(review: str) -> int:
     """Reviews in a year for a review frequency (daily 252, weekly 52, monthly 12), to annualise per-review numbers.
 
+    Inputs:  review, daily, weekly or monthly.
+    Outputs: the number of reviews in a year, as an int.
+    Why:     per-review returns and tracking errors must be annualised with the right factor.
     Raises:  ValueError if review is not daily, weekly or monthly.
     """
     _check_review(review)
@@ -171,7 +185,12 @@ def make_current_rule_policy(target: pd.Series, decisions: pd.DatetimeIndex,
     tickers = list(target.index)
 
     def policy(state_row: pd.Series) -> float:
-        """Today's rule for one decision date: 1.0 on a quarter start or a breached band, else 0.0."""
+        """Today's rule for one decision date: 1.0 on a quarter start or a breached band, else 0.0.
+
+        Inputs:  state_row, one decision's state (w_<T> columns), named by its decision date.
+        Outputs: 1.0 (rebalance fully) or 0.0 (do nothing).
+        Why:     lets today's rule run through simulate like any other policy.
+        """
         weights = pd.Series([state_row[f"w_{ticker}"] for ticker in tickers], index=tickers)
         date = pd.Timestamp(state_row.name)
         return current_rule_action(weights, target, date, date in quarter_starts, rule["drift_band"])
@@ -180,7 +199,13 @@ def make_current_rule_policy(target: pd.Series, decisions: pd.DatetimeIndex,
 
 
 def _check_target(close_wide: pd.DataFrame, target: pd.Series) -> list[str]:
-    """Fail fast if the target weights do not fit the price table; return the tickers in price order."""
+    """Fail fast if the target weights do not fit the price table; return the tickers in price order.
+
+    Inputs:  close_wide (date x ticker); target, weights per ticker.
+    Outputs: the tickers, in the column order of close_wide.
+    Why:     a mismatch or weights that do not sum to 1 would silently corrupt every simulated value.
+    Raises:  ValueError if the tickers differ from the price columns or the weights do not sum to 1.
+    """
     if set(target.index) != set(close_wide.columns):
         raise ValueError(f"target tickers {sorted(target.index)} do not match the price columns "
                          f"{sorted(close_wide.columns)}. Check target_weights.policy in config.yaml.")
@@ -191,7 +216,13 @@ def _check_target(close_wide: pd.DataFrame, target: pd.Series) -> list[str]:
 
 
 def _problem_column(cfg: dict, key: str) -> str:
-    """Read problem.<key> (a column name) from the config; a clear error beats a bare KeyError."""
+    """Read problem.<key> (a column name) from the config; a clear error beats a bare KeyError.
+
+    Inputs:  cfg, the full config; key, the entry of the problem section (for example id_column).
+    Outputs: the column name.
+    Why:     the table's index and label names come from config, and a missing entry should say where to add it.
+    Raises:  ValueError if problem.<key> is missing or empty.
+    """
     name = cfg.get("problem", {}).get(key)
     if not name:
         raise ValueError(f"Config has no problem.{key}. Add it to the problem section of config.yaml.")
@@ -200,7 +231,14 @@ def _problem_column(cfg: dict, key: str) -> str:
 
 def _prepare_run(prices: tuple[pd.DataFrame, pd.DataFrame], market_features: pd.DataFrame, target: pd.Series,
                  period: tuple[str, str], cfg: dict) -> dict:
-    """Everything simulate needs before the daily loop: calendar, schedule, returns, ADV, market rows."""
+    """Everything simulate needs before the daily loop: calendar, schedule, returns, ADV, market rows.
+
+    Inputs:  prices, (close_wide, volume_wide); market_features (date x feature); target weights;
+             period, (start, end) as YYYY-MM-DD; cfg, the full config (reads rebalancing, costs, problem).
+    Outputs: a dict with target, days, decisions, id_column, to_execute (execution day -> decision day),
+             returns, adv and market (market features on the decision dates).
+    Why:     keeps the daily loop in simulate short and puts the one-off set-up in a single place.
+    """
     close_wide, volume_wide = prices
     tickers = _check_target(close_wide, target)
     days = close_wide.index[close_wide.index <= pd.Timestamp(period[1])]
@@ -221,7 +259,12 @@ def _prepare_run(prices: tuple[pd.DataFrame, pd.DataFrame], market_features: pd.
 
 
 def _grow(book: dict, day_returns: pd.Series) -> None:
-    """One day of price moves: the value grows and the weights drift, w x (1 + r) / sum(w x (1 + r))."""
+    """One day of price moves: the value grows and the weights drift, w x (1 + r) / sum(w x (1 + r)).
+
+    Inputs:  book, the running state (weights and value); day_returns, that day's return per ticker.
+    Outputs: None; book["weights"] and book["value"] are updated in place.
+    Why:     between trades the weights drift with prices, as the README timing rule says.
+    """
     grown = book["weights"] * (1.0 + day_returns)
     growth = float(grown.sum())
     book["weights"] = grown / growth
@@ -229,7 +272,13 @@ def _grow(book: dict, day_returns: pd.Series) -> None:
 
 
 def _trade(book: dict, target: pd.Series, action: float, adv_row: pd.Series, cost_cfg: dict) -> float:
-    """Execute an action at today's close: pay the cost out of the value, then move the weights."""
+    """Execute an action at today's close: pay the cost out of the value, then move the weights.
+
+    Inputs:  book, the running state; target weights; action in [0, 1]; adv_row, average daily dollar volume
+             per ticker on the decision day; cost_cfg, the costs section (reads aum and the cost model).
+    Outputs: the cost paid, as a fraction of portfolio value; book is updated in place.
+    Why:     every trade is charged by the same cost model, whichever policy asked for it.
+    """
     cost = rebalance_cost(book["weights"], target, action, cost_cfg["aum"], adv_row, cost_cfg)
     book["weights"] = apply_action(book["weights"], target, action)
     book["value"] *= 1.0 - cost
@@ -237,7 +286,15 @@ def _trade(book: dict, target: pd.Series, action: float, adv_row: pd.Series, cos
 
 
 def _state_row(day: pd.Timestamp, book: dict, run: dict, cfg: dict) -> pd.Series:
-    """The state at the close of a decision day, before any trade: only data known at that close."""
+    """The state at the close of a decision day, before any trade: only data known at that close.
+
+    Inputs:  day, the decision date; book, the running state (weights, value, peak, weeks); run, from
+             _prepare_run (target, adv, market); cfg, the full config (reads costs).
+    Outputs: a float Series named day: w_<T>, drift_<T>, drawdown, weeks_since_rebalance,
+             full_rebalance_cost and the market features.
+    Why:     the same row feeds the policy, the decision table and live requests, and holds nothing from
+             after the close, so a label cannot leak into the features.
+    """
     weights, target = book["weights"], run["target"]
     row = {f"w_{ticker}": weights[ticker] for ticker in target.index}
     row.update({f"drift_{ticker}": weights[ticker] - target[ticker] for ticker in target.index})
@@ -251,7 +308,13 @@ def _state_row(day: pd.Timestamp, book: dict, run: dict, cfg: dict) -> pd.Series
 
 def _decide(day: pd.Timestamp, book: dict, run: dict, policy: Callable[[pd.Series], float],
             cfg: dict) -> pd.Series:
-    """Build the state row, ask the policy, remember the action for the execution day."""
+    """Build the state row, ask the policy, remember the action for the execution day.
+
+    Inputs:  day, the decision date; book, the running state; run, from _prepare_run; policy, a function
+             from a state row to an action; cfg, the full config.
+    Outputs: the state row with the action appended; book["actions"] and book["weeks"] are updated.
+    Why:     the action is decided at the close of day t but traded at the next close, so it is stored until then.
+    """
     book["weeks"] += 1
     state = _state_row(day, book, run, cfg)
     action = float(policy(state))
@@ -296,7 +359,13 @@ def simulate(close_wide: pd.DataFrame, volume_wide: pd.DataFrame, market_feature
 
 
 def _finish(run: dict, daily_rows: list[dict], decision_rows: list[pd.Series]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Turn the loop's rows into the daily and decision frames, and log a one-line summary."""
+    """Turn the loop's rows into the daily and decision frames, and log a one-line summary.
+
+    Inputs:  run, from _prepare_run (days, id_column); daily_rows, one dict per day; decision_rows, one
+             state Series per decision date.
+    Outputs: the daily frame and the decision frame, as simulate returns them.
+    Why:     keeps the frame building and the log line out of the daily loop.
+    """
     daily = pd.DataFrame(daily_rows, index=pd.DatetimeIndex(run["days"]))
     decisions = pd.DataFrame(decision_rows).rename_axis(run["id_column"])
     logger.info("Simulated %d days and %d decisions: final value %.4f, total cost %.6f",
@@ -305,14 +374,24 @@ def _finish(run: dict, daily_rows: list[dict], decision_rows: list[pd.Series]) -
 
 
 def _hold(weights: pd.Series, returns_block: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
-    """Buy and hold over a block of days: cumulative growth on each day, and the drifted weights at the end."""
+    """Buy and hold over a block of days: cumulative growth on each day, and the drifted weights at the end.
+
+    Inputs:  weights at the start of the block, per ticker; returns_block, daily returns (day x ticker).
+    Outputs: the growth of one unit on each day of the block, and the weights after the last day.
+    Why:     the reward and the label measure a window with no trading inside it, so they share one formula.
+    """
     paths = (1.0 + returns_block).cumprod()
     growth = (paths * weights).sum(axis=1)
     return growth, weights * paths.iloc[-1] / growth.iloc[-1]
 
 
 def _window_start(state: dict, pre_block: pd.DataFrame) -> dict:
-    """Drift the decision-day state over (t, e] to the execution close e, the same for every action."""
+    """Drift the decision-day state over (t, e] to the execution close e, the same for every action.
+
+    Inputs:  state, the decision-day weights, value, peak and adv; pre_block, daily returns on (t, e].
+    Outputs: a dict with the weights, value, peak, drawdown and adv at the close of the execution day.
+    Why:     the trade happens at e, so every candidate action starts from the same pre-trade position.
+    """
     pre_growth, weights_e = _hold(state["weights"], pre_block)
     value = state["value"] * pre_growth.iloc[-1]
     peak = max(state["peak"], state["value"] * pre_growth.max())
@@ -320,7 +399,13 @@ def _window_start(state: dict, pre_block: pd.DataFrame) -> dict:
 
 
 def _reward(start: dict, action: float, window: pd.DataFrame, target: pd.Series, cfg: dict) -> float:
-    """reward = window return - cost - penalty_lambda x increase in drawdown during the window."""
+    """reward = window return - cost - penalty_lambda x increase in drawdown during the window.
+
+    Inputs:  start, the state at the trade (from _window_start); action in [0, 1]; window, daily returns on the
+             reward window; target weights; cfg, the full config (reads costs and portfolio.reward).
+    Outputs: the reward, as a float.
+    Why:     one reward function scores the labels and the reinforcement learning agent alike.
+    """
     cost = rebalance_cost(start["weights"], target, action, cfg["costs"]["aum"], start["adv"], cfg["costs"])
     growth, _ = _hold(apply_action(start["weights"], target, action), window)
     values = start["value"] * (1.0 - cost) * growth
@@ -332,9 +417,10 @@ def _reward(start: dict, action: float, window: pd.DataFrame, target: pd.Series,
 def _label(start: dict, window: pd.DataFrame, target: pd.Series, cfg: dict) -> float:
     """Try every action from one decision's state at the trade and return the one with the highest reward.
 
-    start:  weights, value, peak, drawdown and adv at the close of the execution day, before the trade.
-    window: daily returns on the reward window (execution day, next execution day].
-    Ties go to the smaller action (it trades less).
+    Inputs:  start, weights, value, peak, drawdown and adv at the close of the execution day, before the trade;
+             window, daily returns on the reward window (execution day, next execution day]; target; cfg.
+    Outputs: the best action (one of portfolio.actions). Ties go to the smaller action (it trades less).
+    Why:     the label the classifier learns is the action that would have done best one window ahead.
     """
     best_action, best_reward = np.nan, -np.inf
     for action in sorted(cfg["portfolio"]["actions"]):
@@ -345,7 +431,8 @@ def _label(start: dict, window: pd.DataFrame, target: pd.Series, cfg: dict) -> f
 
 
 def _decision_windows(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFrame,
-                      volume_wide: pd.DataFrame, target: pd.Series, cfg: dict):
+                      volume_wide: pd.DataFrame, target: pd.Series,
+                      cfg: dict) -> Iterator[tuple[pd.Timestamp, dict, pd.DataFrame]]:
     """Walk through the decisions that have a full reward window.
 
     Inputs:  daily and decisions, the two frames from simulate; close_wide, volume_wide; target; cfg.
@@ -366,7 +453,12 @@ def _decision_windows(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: 
 
 def _labels(daily: pd.DataFrame, decisions: pd.DataFrame, close_wide: pd.DataFrame, volume_wide: pd.DataFrame,
             target: pd.Series, cfg: dict) -> pd.Series:
-    """best_action for every decision with a full reward window; NaN for the rest (the last one)."""
+    """best_action for every decision with a full reward window; NaN for the rest (the last one).
+
+    Inputs:  daily and decisions, the two frames from simulate; close_wide, volume_wide; target; cfg.
+    Outputs: a Series indexed by decision date, named problem.target_column.
+    Why:     the label column of the decision table, built on the windows the rewards also use.
+    """
     labels = pd.Series(np.nan, index=decisions.index, name=_problem_column(cfg, "target_column"))
     for decided, start, window in _decision_windows(daily, decisions, close_wide, volume_wide, target, cfg):
         labels.loc[decided] = _label(start, window, target, cfg)
