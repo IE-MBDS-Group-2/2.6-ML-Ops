@@ -32,11 +32,11 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
-from src import (benchmarks, clean_data, config, evaluate, features, infer,
-                 load_data)
+from src import (allocation, benchmarks, clean_data, config, evaluate,
+                 features, infer, load_data)
 from src import logger as log_setup
 from src import (portfolio, rl_agent, robustness, rules, selection, tracking,
-                 trades, train, utils, validate)
+                 trades, train, utils)
 
 logger = logging.getLogger(__name__)
 
@@ -106,25 +106,6 @@ def _split_by_date(table: pd.DataFrame, train_end: str, val_end: str) -> tuple:
     return train_rows, val_rows, test_rows
 
 
-def _load_prices(path: Path, cfg: dict) -> pd.DataFrame:
-    """Read one long price file, clean it, and stop here if the data is not trustworthy.
-
-    Inputs:  path, a long file (date, ticker, close, volume); cfg, the full config (reads data).
-    Outputs: the clean long table.
-    Why:     training and inference data go through the same three steps, so they cannot differ.
-    Raises:  FileNotFoundError, ValueError (from load_data and validate).
-    """
-    cols = cfg["data"]["columns"]
-    clean = clean_data.clean_dataframe(
-        load_data.load_raw_data(path), date_column=cols["date_column"],
-        sort_by=[cols["date_column"], cols["ticker_column"]])
-    validate.validate_dataframe(
-        clean, cfg["data"]["required_columns"], tickers=cfg["data"]["tickers"],
-        max_abs_daily_return=cfg["data"]["max_abs_daily_return"], price_columns=cols,
-    )
-    return clean
-
-
 def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
     """Turn the clean long table into close_wide, volume_wide and the market features.
 
@@ -142,7 +123,7 @@ def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
 
 def _target_weights(cfg: dict) -> pd.Series:
     """The model portfolio's target weights from config.yaml."""
-    return pd.Series(cfg["target_weights"]["policy"], dtype=float)
+    return allocation.stored_target(cfg["target_weights"]["method"], cfg)
 
 
 def _feature_columns(table: pd.DataFrame, cfg: dict) -> list[str]:
@@ -385,7 +366,7 @@ def _recommendations(model: Pipeline | None, columns: list[str], cfg: dict) -> p
              every row is today's rule (decision D8), and says so with fallback = True.
     Raises:  FileNotFoundError, ValueError (data checks, or too few days for the features).
     """
-    clean = _load_prices(PROJECT_ROOT / cfg["paths"]["inference_data"], cfg)
+    clean = load_data.load_prices(PROJECT_ROOT / cfg["paths"]["inference_data"], cfg)
     close_wide, volume_wide, market = _market_inputs(clean, cfg)
     ready = market.dropna().index
     if ready.empty:
@@ -396,7 +377,7 @@ def _recommendations(model: Pipeline | None, columns: list[str], cfg: dict) -> p
         close_wide, volume_wide, market, _target_weights(cfg),
         str(ready[0].date()), str(close_wide.index[-1].date()), cfg)
     rule_actions = table[portfolio.RULE_ACTION_COLUMN]
-    if model is None:
+    if model is None or cfg["target_weights"]["method"] != "policy":
         predictions = pd.DataFrame({"prediction": rule_actions, "probability": 0.0}, index=table.index)
         return infer.apply_fallback(predictions, rule_actions, pd.Series(True, index=table.index),
                                     cfg["fallback"]["min_probability"])
@@ -421,11 +402,12 @@ def _keep_or_drop_model(model: Pipeline, metrics: dict, paths: dict, cfg: dict, 
             logger.warning("Removed %s: it is from an earlier run and no model passed the gate now", paths["model"])
         logger.warning("No model saved or registered: the quality gate is not met. Today's rule serves")
         return None
+    model.target_metadata_ = allocation.model_target(cfg)
     utils.save_model(model, paths["model"])
     key = cfg["quality_gate"]["metric_key"]
     tracking.log_model(tracker, paths["model"], cfg["tracking"]["model_artifact"],
                        {key: metrics[key], "gate": metrics["gate"], "challenger": metrics["challenger"]["name"],
-                        "model_type": metrics["model_type"]})
+                        "model_type": metrics["model_type"], "target": model.target_metadata_})
     return model
 
 
@@ -549,11 +531,11 @@ def _positions_action(approved: Pipeline | None, columns: list[str], weights: pd
              rebalance, so both start at 0.
     """
     close_wide, volume_wide, market = _market_inputs(
-        _load_prices(PROJECT_ROOT / cfg["paths"]["inference_data"], cfg), cfg)
+        load_data.load_prices(PROJECT_ROOT / cfg["paths"]["inference_data"], cfg), cfg)
     state = portfolio.live_state(close_wide, volume_wide, market, weights, 0.0, 0,
                                  _target_weights(cfg).reindex(weights.index), cfg)
     rule = state[portfolio.RULE_ACTION_COLUMN]
-    if approved is None:
+    if approved is None or cfg["target_weights"]["method"] != "policy":
         return float(rule.iloc[0])
     inputs = state[columns]
     answer = infer.apply_fallback(infer.run_inference(approved, inputs, include_proba=True), rule,
@@ -611,7 +593,8 @@ def run(cfg: dict, tracker: object = None) -> dict:
     """
     paths = config.resolve_paths(cfg, PROJECT_ROOT)
     # 1. Load, clean and validate the raw prices; keep the clean table and record it as the data version.
-    clean = _load_prices(paths["raw_data"], cfg)
+    config.check_target_snapshot(cfg, paths["raw_data"])
+    clean = load_data.load_prices(paths["raw_data"], cfg)
     utils.save_csv(clean, paths["processed_data"])
     tracking.log_dataset(tracker, paths["processed_data"], cfg["tracking"]["dataset_artifact"])
     # 2. Wide prices and market features, then the decision table with the best_action label.

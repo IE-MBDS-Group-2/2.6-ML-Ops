@@ -128,6 +128,8 @@ def _pipeline_setup(tmp_path: Path, monkeypatch, prices: pd.DataFrame | None = N
     recent = prices[prices["date"].isin(days[-300:])]
     recent.to_csv(tmp_path / "data" / "inference" / "prices_latest.csv", index=False)
     cfg = config.load_config(main.CONFIG_PATH)
+    cfg["target_weights"].pop("calculated", None)
+    cfg["target_weights"].pop("fit", None)
     cfg["data"]["end"] = "2023-12-29"
     cfg["portfolio"]["first_decision_date"] = "2020-04-10"
     cfg["split"].update(train_end="2021-12-31", val_end="2022-12-31", test_end="2023-12-29")
@@ -457,3 +459,11 @@ def test_unit_versions_tried_counts_only_versions_scored_on_validation():
     assert main._versions_tried(cfg, {}) == 1
     assert main._versions_tried(cfg, {"rl": {}}) == 4                     # classifier plus the reported agent
     assert main._versions_tried({**cfg, "model": {"type": "fitted_q"}}, {"rl": {}}) == 3
+
+
+@pytest.mark.parametrize("method", config.CALCULATED_TARGETS)
+def test_unit_pipeline_uses_stored_target(method):
+    """Changing the configured method selects its reviewed weights throughout the pipeline."""
+    cfg = config.load_config()
+    cfg["target_weights"]["method"] = method
+    assert main._target_weights(cfg).to_dict() == cfg["target_weights"]["calculated"][method]
