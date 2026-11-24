@@ -100,10 +100,10 @@ class PredictRequest(BaseModel):
     def _total_above_zero(self) -> "PredictRequest":
         """Reject positions that add up to nothing: there is no portfolio to rebalance.
 
-    Inputs:  none besides the validated request itself (self).
-    Outputs: the request, unchanged; a ValueError (a 422) when the market values total 0.
-    Why:     weights are market value over the total, so a total of 0 cannot be turned into weights.
-    """
+        Inputs:  none besides the validated request itself (self).
+        Outputs: the request, unchanged; a ValueError (a 422) when the market values total 0.
+        Why:     weights are market value over the total, so a total of 0 cannot be turned into weights.
+        """
         if sum(position.market_value for position in self.positions) <= 0:
             raise ValueError("positions add up to a total market value of 0. Send at least one holding above 0.")
         return self
