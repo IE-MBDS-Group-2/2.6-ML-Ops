@@ -160,8 +160,9 @@ def _model_source(cfg: dict, env: dict[str, str]) -> tuple[Path, str]:
     """Where the model file is, and the version name /health reports for it.
 
     Inputs:  cfg, the full config (paths.model, tracking.project, tracking.model_artifact); env, from
-             config.load_env (MODEL_SOURCE, WANDB_MODEL_ALIAS).
-    Outputs: (path of the .joblib file, version name).
+             config.load_env (MODEL_SOURCE, WANDB_MODEL_ALIAS, MODEL_VERSION).
+    Outputs: (path of the .joblib file, version name). A local file reports MODEL_VERSION when the release image
+             baked one in (e.g. rebalance-model:v7), else local:<file name>.
     Why:     the same function serves a local file or a promoted W&B version, so start-up has one place to ask.
     Raises:  FileNotFoundError from tracking.download_model when no W&B version has the alias.
     """
@@ -169,7 +170,7 @@ def _model_source(cfg: dict, env: dict[str, str]) -> tuple[Path, str]:
         name, alias = cfg["tracking"]["model_artifact"], env["WANDB_MODEL_ALIAS"]
         return tracking.download_model(env, cfg["tracking"]["project"], name, alias), f"{name}:{alias}"
     path = config.resolve_paths(cfg)["model"]
-    return path, f"local:{path.name}"
+    return path, env.get("MODEL_VERSION") or f"local:{path.name}"
 
 
 def load_serving_model(cfg: dict, env: dict[str, str]) -> tuple[Pipeline | None, str]:

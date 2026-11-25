@@ -315,6 +315,13 @@ def test_unit_load_serving_model_local_file(tmp_path, fitted_model):
     assert version == "local:model.joblib"
 
 
+def test_unit_load_serving_model_reports_the_version_baked_into_the_image(tmp_path, fitted_model):
+    utils.save_model(fitted_model, tmp_path / "model.joblib")
+    cfg = {**CFG, "paths": {**CFG["paths"], "model": str(tmp_path / "model.joblib")}}
+    env = {"MODEL_SOURCE": "local", "MODEL_VERSION": "rebalance-model:v7"}
+    assert api.load_serving_model(cfg, env)[1] == "rebalance-model:v7"
+
+
 def test_unit_load_serving_model_without_a_file_is_rule_only(tmp_path):
     cfg = {**CFG, "paths": {**CFG["paths"], "model": str(tmp_path / "absent.joblib")}}
     assert api.load_serving_model(cfg, {"MODEL_SOURCE": "local"}) == (None, "rule")
