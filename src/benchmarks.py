@@ -129,7 +129,14 @@ def fit_weights(train_returns: pd.DataFrame, method: str, params: dict) -> pd.Se
 
 
 def training_returns(close_wide: pd.DataFrame, cfg: dict) -> pd.DataFrame:
-    """Compute daily returns using only prices in the pipeline's configured training window."""
+    """Compute daily returns using only prices in the pipeline's configured training window.
+
+    Inputs: close_wide, the date x ticker close table; cfg, reading portfolio.first_decision_date, split.train_end
+        and data.tickers.
+    Outputs: Daily percentage returns for the configured tickers from the day after first_decision_date up to
+        the training cutoff.
+    Why: Benchmark weights are estimated on training years only, so no later price reaches them.
+    """
     start, cutoff = cfg["portfolio"]["first_decision_date"], cfg["split"]["train_end"]
     return close_wide.loc[start:cutoff, cfg["data"]["tickers"]].pct_change(fill_method=None).iloc[1:]
 

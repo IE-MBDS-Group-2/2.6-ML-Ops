@@ -98,7 +98,12 @@ class PredictRequest(BaseModel):
 
     @model_validator(mode="after")
     def _total_above_zero(self) -> "PredictRequest":
-        """Reject positions that add up to nothing: there is no portfolio to rebalance."""
+        """Reject positions that add up to nothing: there is no portfolio to rebalance.
+
+        Inputs:  none besides the validated request itself (self).
+        Outputs: the request, unchanged; a ValueError (a 422) when the market values total 0.
+        Why:     weights are market value over the total, so a total of 0 cannot be turned into weights.
+        """
         if sum(position.market_value for position in self.positions) <= 0:
             raise ValueError("positions add up to a total market value of 0. Send at least one holding above 0.")
         return self
@@ -157,6 +162,7 @@ def _model_source(cfg: dict, env: dict[str, str]) -> tuple[Path, str]:
     Inputs:  cfg, the full config (paths.model, tracking.project, tracking.model_artifact); env, from
              config.load_env (MODEL_SOURCE, WANDB_MODEL_ALIAS).
     Outputs: (path of the .joblib file, version name).
+    Why:     the same function serves a local file or a promoted W&B version, so start-up has one place to ask.
     Raises:  FileNotFoundError from tracking.download_model when no W&B version has the alias.
     """
     if env["MODEL_SOURCE"] == "wandb":
@@ -291,7 +297,12 @@ app = FastAPI(title="ETF rebalancing advisor", version=config.ENV_DEFAULTS["APP_
 
 
 def _positions_frame(body: PredictRequest, cfg: dict) -> pd.DataFrame:
-    """The request's positions as a table with the positions column names from config.yaml."""
+    """The request's positions as a table with the positions column names from config.yaml.
+
+    Inputs:  body, the validated request; cfg, the full config (reads positions.ticker_column and value_column).
+    Outputs: a DataFrame with one row per position: ticker name and market value.
+    Why:     trades.positions_to_weights reads the same table shape as the batch pipeline.
+    """
     names = cfg["positions"]
     return pd.DataFrame({
         names["ticker_column"]: [position.ticker.value for position in body.positions],
@@ -305,6 +316,7 @@ def _check_history(close_wide: pd.DataFrame, as_of: date, min_days: int) -> None
     Inputs:  close_wide (date x ticker), already cut at as_of; as_of, the request date; min_days,
              api.min_history_days.
     Outputs: None.
+    Why:     the longest return feature needs enough days, and a stale series would answer for the wrong day.
     Raises:  ValueError saying what to send instead.
     """
     if close_wide.empty or close_wide.index[-1] != pd.Timestamp(as_of):
@@ -319,6 +331,7 @@ def market_inputs(body: PredictRequest, cfg: dict) -> tuple[pd.DataFrame, pd.Dat
 
     Inputs:  body, the request; cfg, the full config (data, features, api).
     Outputs: (close_wide, volume_wide, market_features), ending on as_of.
+    Why:     live prices get exactly the checks and features the training data got, so the two cannot differ.
     Raises:  ValueError from validate, to_wide, features or the history check.
     """
     cols, tickers = cfg["data"]["columns"], cfg["data"]["tickers"]
@@ -338,7 +351,13 @@ def market_inputs(body: PredictRequest, cfg: dict) -> tuple[pd.DataFrame, pd.Dat
 
 
 def _model_decision(model: Pipeline, state: pd.DataFrame, cfg: dict) -> dict:
-    """The model's answer for the live state, with the 60% fallback to today's rule (infer.py)."""
+    """The model's answer for the live state, with the 60% fallback to today's rule (infer.py).
+
+    Inputs:  model, the loaded pipeline; state, the one-row live state with the rule action column; cfg, the full
+             config (reads fallback.min_probability).
+    Outputs: {"prediction", "probability", "recommendation", "fallback", "reason"} for the response.
+    Why:     the model decides only when it is confident and fully informed; otherwise today's rule does.
+    """
     columns = [name for name in state.columns if name != portfolio.RULE_ACTION_COLUMN]
     inputs = state[columns]
     predictions = infer.run_inference(model, inputs, include_proba=True)
@@ -352,7 +371,14 @@ def _model_decision(model: Pipeline, state: pd.DataFrame, cfg: dict) -> dict:
 
 def _rule_decision(method: str, state: pd.DataFrame, close_wide: pd.DataFrame, target: pd.Series,
                    cfg: dict) -> dict:
-    """The chosen rule's answer; for smart with no model loaded, today's rule as the fallback (D8)."""
+    """The chosen rule's answer; for smart with no model loaded, today's rule as the fallback (D8).
+
+    Inputs:  method, the rebalancing method; state, the one-row live state; close_wide, prices (date x ticker);
+             target, the weights to return to; cfg, the full config.
+    Outputs: the same dictionary as _model_decision, with prediction and probability None; fallback is True
+             only for smart (no model).
+    Why:     calendar, tolerance_band and calendar_and_band need no model, and smart without one must still answer.
+    """
     row = state.iloc[0]
     decisions = portfolio.decision_dates(close_wide.index, str(close_wide.index[0].date()), str(row.name.date()),
                                          portfolio.review_frequency(cfg))
@@ -366,7 +392,15 @@ def _rule_decision(method: str, state: pd.DataFrame, close_wide: pd.DataFrame, t
 
 def _target_decision(method: str, model: Pipeline | None, state: pd.DataFrame, close: pd.DataFrame,
                      target: pd.Series, target_method: str, cfg: dict) -> dict:
-    """Apply the chosen rule and explain a smart fallback for a different allocation target."""
+    """Apply the chosen rule and explain a smart fallback for a different allocation target.
+
+    Inputs:  method, the rebalancing method; model, the loaded pipeline or None; state, the one-row live state;
+             close, prices (date x ticker); target, the weights to return to; target_method, the requested
+             target_weights.method; cfg, the full config.
+    Outputs: the decision dictionary: the model's answer for smart on the policy mix, else a rule's answer.
+    Why:     the model is trained only for the approved policy mix, so any other target or an unmatched model
+             falls back to calendar-and-band with the reason said in words.
+    """
     if method != SMART:
         return _rule_decision(method, state, close, target, cfg)
     if target_method != "policy":
@@ -415,7 +449,13 @@ def recommend(body: PredictRequest, model: Pipeline | None, model_version: str, 
 
 @app.get("/health", response_model=HealthResponse)
 def health(http_request: Request) -> HealthResponse:
-    """Liveness and what is served: 200 whenever the app is up, with or without a model."""
+    """Liveness and what is served: 200 whenever the app is up, with or without a model.
+
+    Inputs:  http_request, the request, used to reach the app state (env, model, model_version).
+    Outputs: HealthResponse: status, whether a model is loaded, its version, the policy (model or rule), the
+             release and the commit.
+    Why:     the host and the people deploying need to see which model and commit answer.
+    """
     state = http_request.app.state
     loaded = state.model is not None
     return HealthResponse(status="ok", model_loaded=loaded, model_version=state.model_version,
@@ -425,7 +465,14 @@ def health(http_request: Request) -> HealthResponse:
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(body: PredictRequest, http_request: Request) -> PredictResponse:
-    """One recommendation for one portfolio. A ValueError from the pipeline becomes a 400 with its message."""
+    """One recommendation for one portfolio. A ValueError from the pipeline becomes a 400 with its message.
+
+    Inputs:  body, the validated request; http_request, the request, used to reach the model and the monitor.
+    Outputs: PredictResponse; one monitoring row (as_of, recommendation, probability, fallback, model_version,
+             latency_ms) is recorded.
+    Why:     the route only times the call, turns a pipeline error into a 400 and records the answer; the logic
+             lives in recommend.
+    """
     started = time.perf_counter()
     state = http_request.app.state
     try:

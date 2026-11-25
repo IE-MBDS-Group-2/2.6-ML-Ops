@@ -357,8 +357,6 @@ def test_unit_best_action_is_full_rebalance_before_a_crash_in_the_overweight_etf
 
 
 def test_integration_market_features_then_decision_table():
-    from src import features  # pylint: disable=import-outside-toplevel
-
     close, volume = make_prices(periods=260)
     market = features.compute_market_features(close, return_weeks=[4, 12], vol_days=20)
     table = portfolio.build_decision_table(close, volume, market, TARGET, "2024-01-01", "2024-12-31", make_cfg())

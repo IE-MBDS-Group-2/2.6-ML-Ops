@@ -9,12 +9,11 @@ import pandas as pd
 import pytest
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_is_fitted
 
-from src import train
+from src import features, train, utils
 
 COLUMNS = ["drift_SPY", "drawdown"]
 MODEL_PARAMS = {"max_iter": 1000, "class_weight": "balanced"}
@@ -54,7 +53,7 @@ def test_unit_train_model_known_value_separable_clusters_are_learned():
     centres = pd.DataFrame({"drift_SPY": [-3.0, 0.0, 3.0], "drawdown": [0.0, 3.0, 0.0]})
     assert list(model.predict(centres)) == [0.0, 0.5, 1.0]
     # The real action labels come back (sklearn alone rejects 0.5 as a "continuous" label).
-    assert isinstance(model.named_steps["model"], LogisticRegression)
+    assert isinstance(model.named_steps["model"], train.ActionClassifier)
     assert list(model.named_steps["model"].classes_) == [0.0, 0.5, 1.0]
     assert model.predict_proba(centres).shape == (3, 3)
 
@@ -98,8 +97,6 @@ def test_unit_train_model_raises_when_random_state_is_given_twice():
 
 
 def test_integration_preprocessor_then_train_then_saved_model_predicts_the_same(tmp_path):
-    from src import features, utils  # pylint: disable=import-outside-toplevel
-
     X, y = make_data()
     model = train.train_model(X, y, features.get_feature_preprocessor(COLUMNS), "classification", MODEL_PARAMS)
     path = tmp_path / "models" / "model.joblib"

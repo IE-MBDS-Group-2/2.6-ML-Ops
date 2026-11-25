@@ -225,6 +225,16 @@ A model is only saved, registered and served if `max_drawdown_reduction >= 0.20`
 
 So the Stage 2 classifier is not saved, not registered and not shipped. Until a model passes, the live service answers with today's rule and says so in its reply. We report this result as it is and do not tune the model on the validation years until it passes. Stage 3 adds the reinforcement learning agent, simple-rule challengers and benchmark portfolios, and a release decision on 2022 to 2025 that runs once.
 
+### Why the label serves the gate
+The gate asks for one thing: on validation (2020 to 2021) the model's maximum drawdown must be at least 20% smaller than today's rule (`max_drawdown_reduction >= 0.20`). The label is chosen to push in that direction, and it is worth saying how far it can.
+
+- **The link.** Maximum drawdown is the deepest fall from a running peak. A week can only deepen it by ending below the previous high, that is, by making a new low. The reward charges exactly that: it subtracts `penalty_lambda` times the new drop below the previous high. So the label prefers the actions that avoid the steps that build the worst trough.
+- **The gap.** The label is picked one week at a time, while maximum drawdown belongs to the whole path. A week that makes no new low gives no drawdown signal at all, and the label there is decided by return and cost alone. The label is therefore a proxy for the gate's measure, not the measure itself.
+- **How the proxy was tested.** First, the perfect-hindsight ceiling: an agent that knows the future reduces maximum drawdown by only 0.0044 on 2007 to 2021, so no model that only chooses among the three rebalancing actions can reach 0.20. The limit is the action space, not the model. Second, the reinforcement learning agent, which optimises several weeks at once instead of one: median of 5 seeds +0.019 on validation, best seed +0.024. Third, the gate itself blocks every model, so today's rule serves (decision D8). That is the design working as intended, and we report it as it is.
+- **What would close the gap.** Actions that can change the mix itself (dynamic weights within a mandate band), and a gate chosen on the training years instead of fixed in advance. More than three actions is the first step under "A stronger agent" in [Future work](#future-work); the other two come after it.
+
+The metric (`max_drawdown_reduction`), the threshold (0.20) and the direction (at least, on validation) are the same here, in `TEAM_BRIEF.md` and in `config.yaml` (`quality_gate`).
+
 ### Walk-forward results per year
 Train years only, shipped settings; each year scored by a model trained on the years before it.
 

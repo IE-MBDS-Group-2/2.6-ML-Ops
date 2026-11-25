@@ -47,6 +47,10 @@ def average_daily_dollar_volume(
 
     The value on day t uses days t-window+1 .. t only, so it is known at the
     close of day t. The first window-1 rows are NaN.
+
+    Inputs: close and volume, date x ETF tables of the same shape; window, the number of days to average.
+    Outputs: Date x ETF table of average daily dollar volume.
+    Why: The market impact term scales a trade by what the ETF normally trades, without looking ahead.
     """
     return (close * volume).rolling(window, min_periods=window).mean()
 
@@ -56,6 +60,11 @@ def sqrt_impact_bps(trade_value: pd.Series | np.ndarray, adv: pd.Series | np.nda
     """Square-root market impact in bps: impact_factor x sqrt(trade_value / adv x 100).
 
     Zero where adv is missing, NaN or non-positive, or where nothing is traded.
+
+    Inputs: trade_value, currency traded per ETF; adv, average daily dollar volume in the same currency, or
+        None; impact_factor, the costs.slippage.impact_factor setting.
+    Outputs: Array of impact in basis points, one value per ETF.
+    Why: Larger trades relative to daily volume move the price more, and the cost grows with the square root.
     """
     trade_value = np.asarray(trade_value, dtype=float)
     adv = np.asarray(adv, dtype=float)
@@ -65,7 +74,13 @@ def sqrt_impact_bps(trade_value: pd.Series | np.ndarray, adv: pd.Series | np.nda
 
 
 def commission(trade_value: pd.Series | np.ndarray, rate: float, min_fee: float, cap: float) -> np.ndarray:
-    """Commission in currency units per trade: rate x value, floored then capped."""
+    """Commission in currency units per trade: rate x value, floored then capped.
+
+    Inputs: trade_value, currency traded per ETF; rate, min_fee (currency) and cap (fraction of the trade value)
+        from costs.commission.
+    Outputs: Array of fees in currency, one per ETF; zero where nothing is traded.
+    Why: The broker's fee schedule has a minimum per order and a ceiling, so a flat rate would misprice small trades.
+    """
     trade_value = np.asarray(trade_value, dtype=float)
     fee = np.maximum(rate * trade_value, min_fee)
     fee = np.minimum(fee, cap * trade_value)
@@ -75,7 +90,13 @@ def commission(trade_value: pd.Series | np.ndarray, rate: float, min_fee: float,
 def slippage_bps(delta_w: pd.Series | np.ndarray, trade_value: pd.Series | np.ndarray,
                  adv: pd.Series | np.ndarray | None, entry_bps: float, exit_bps: float,
                  impact_factor: float) -> np.ndarray:
-    """Adverse slippage in bps per ETF: base (entry for buys, exit for sells) + impact."""
+    """Adverse slippage in bps per ETF: base (entry for buys, exit for sells) + impact.
+
+    Inputs: delta_w, signed weight change per ETF; trade_value, adv and impact_factor as in sqrt_impact_bps;
+        entry_bps and exit_bps, the base slippage for buys and sells from costs.slippage.
+    Outputs: Array of slippage in basis points, one value per ETF.
+    Why: Buying and selling are charged different base slippage, plus the size-dependent impact.
+    """
     delta_w = np.asarray(delta_w, dtype=float)
     base = np.where(delta_w < 0, exit_bps, entry_bps)
     return base + sqrt_impact_bps(trade_value, adv, impact_factor)
@@ -85,13 +106,18 @@ def trade_costs(delta_w: pd.Series, aum: float, adv: pd.Series | None = None,
                 cfg: dict | None = None) -> pd.Series:
     """Cost of one rebalance as a fraction of portfolio value, per ETF.
 
-    Args:
+    Inputs:
         delta_w: signed weight change per ETF (positive = buy, negative = sell).
         aum: capital allocated to the model portfolio. Passed in, never read
             from a global, so a sweep over AUM can override it.
         adv: trailing average daily dollar volume per ETF, in the same currency
             as aum. Only used by the realistic model; None means no impact term.
         cfg: the `costs` section of config.yaml.
+
+    Outputs: Series (or array) of cost fractions, one per ETF; the flat model charges |delta_w| x flat.rate, the
+        realistic model charges commission plus slippage on the trade value, divided by aum.
+    Why: The agent and every baseline rule are charged by this one function, so results compare fairly.
+    Raises: ValueError if cfg is missing or costs.model is not "flat" or "realistic".
     """
     if cfg is None:
         raise ValueError("cfg (the costs section of config.yaml) is required")

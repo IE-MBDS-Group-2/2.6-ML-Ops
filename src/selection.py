@@ -139,7 +139,13 @@ def _fit_candidate(rows: pd.DataFrame, columns: list[str], cfg: dict, model_para
 
 def _window_target(table: pd.DataFrame, market_data: tuple, cfg: dict,
                    train_dates: pd.DatetimeIndex) -> tuple[pd.DataFrame, dict]:
-    """Refit a calculated target before each scoring window to prevent future allocation leakage."""
+    """Refit a calculated target before each scoring window to prevent future allocation leakage.
+
+    Inputs: Decision table, market frames, configuration and the window's training dates.
+    Outputs: The decision table and configuration for this window: unchanged for the policy mix, else rebuilt
+        with weights fitted on returns up to the last training date.
+    Why: Weights fitted on later years would leak the future into an earlier scoring block.
+    """
     method = cfg["target_weights"].get("method", "policy")
     if method == "policy":
         return table, cfg
@@ -156,7 +162,12 @@ def _window_target(table: pd.DataFrame, market_data: tuple, cfg: dict,
 
 
 def _prepare_window(table: pd.DataFrame, market_data: tuple, cfg: dict, dates: tuple) -> tuple:
-    """Build target and labels once per cutoff, ready to reuse across parameter trials."""
+    """Build target and labels once per cutoff, ready to reuse across parameter trials.
+
+    Inputs: Decision table, market frames, configuration and a (training dates, scoring dates) pair.
+    Outputs: Eligible rows, the window's configuration, feature columns and scoring dates.
+    Why: Rows whose label window reaches the scoring block are dropped, and the work is not repeated per trial.
+    """
     train_dates, score_dates = dates
     table, settings = _window_target(table, market_data, cfg, train_dates)
     calendar = market_data[0].loc[:cfg["split"]["train_end"]].index
@@ -168,7 +179,12 @@ def _prepare_window(table: pd.DataFrame, market_data: tuple, cfg: dict, dates: t
 
 
 def _prepared_windows(table: pd.DataFrame, market_data: tuple, cfg: dict) -> list:
-    """Prepare chronological training windows independently of candidate parameters."""
+    """Prepare chronological training windows independently of candidate parameters.
+
+    Inputs: Decision table, market frames and configuration (reads selection and split.train_end).
+    Outputs: One prepared window per walk-forward block, in chronological order.
+    Why: A calculated target does not depend on the model parameters, so the grid search prepares it once.
+    """
     settings = cfg["selection"]
     last_end = cfg["split"]["train_end"]
     calendar = market_data[0].loc[:last_end].index
@@ -178,7 +194,12 @@ def _prepared_windows(table: pd.DataFrame, market_data: tuple, cfg: dict) -> lis
 
 
 def _score_prepared(windows: list, market_data: tuple, model_params: dict) -> pd.DataFrame:
-    """Fit each candidate on the prepared labels and score on the following block."""
+    """Fit each candidate on the prepared labels and score on the following block.
+
+    Inputs: Prepared windows, market frames and the candidate model parameters.
+    Outputs: One row per window, as _score_window returns.
+    Why: Each parameter trial reuses the prepared windows and only refits the model.
+    """
     results = []
     for rows, cfg, columns, score_dates in windows:
         model = _fit_candidate(rows, columns, cfg, model_params)

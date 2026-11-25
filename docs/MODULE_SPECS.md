@@ -15,7 +15,7 @@ data/raw/prices.csv (date, ticker, close, volume; long format)
   -> features.compute_market_features   (4w and 12w returns, 20d vol, per ETF, no look-ahead)
   -> portfolio.build_decision_table     (one row per Friday: state + market features + label best_action,
                                           simulated along the current rule's path)
-  -> main._split_by_date                (train 2007-09 to 2019 / validation 2020-21 / test 2022-25 sealed)
+  -> split.split_by_date               (train 2007-09 to 2019 / validation 2020-21 / test 2022-25 sealed)
   -> features.get_feature_preprocessor  (unfitted imputer + scaler)
   -> train.train_model                  (Pipeline: preprocess + LogisticRegression)
   -> evaluate.evaluate_model            (accuracy, f1_macro on validation)
@@ -243,8 +243,8 @@ Tests:
 ## main.py (Miguel)
 
 ```python
-def split_data(X, y, test_size: float, val_size: float, random_state: int, stratify: bool) -> tuple  # contract, kept and tested
-def _split_by_date(table: pd.DataFrame, train_end: str, val_end: str) -> tuple                      # used by the pipeline
+def split_data(X, y, test_size: float, val_size: float, random_state: int, stratify: bool) -> tuple  # contract; calls split.split_data
+# the split itself lives in src/split.py: split_data (random, contract), split_by_date (the pipeline), up_to_date
 def main() -> None                                                                                   # contract
 ```
 
@@ -256,7 +256,7 @@ def main() -> None                                                              
 
 Tests:
 - `split_data` sizes with no overlap.
-- `_split_by_date` boundaries.
+- `split.split_by_date` boundaries (tests/test_split.py).
 - A missing raw file exits 1.
 - **Pipeline test:** synthetic prices for 5 tickers over about 3 years in `tmp_path`, with config paths and dates
   patched. Then the 4 outputs exist, the model reloads, and there's one prediction row per inference decision date.
