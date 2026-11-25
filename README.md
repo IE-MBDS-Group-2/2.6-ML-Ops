@@ -393,6 +393,9 @@ Then open `http://localhost:8000/health` (or `/docs`). Stop it with Ctrl+C.
 - **Size:** about 1.5 GB (the scientific stack, W&B, and the dev tools that share the lock file).
 - **Changing packages:** edit `environment.yml`, then run `conda-lock -f environment.yml -p linux-64` and commit both files.
 
+## Retrain
+A monthly and manual workflow retrains on the self-hosted runner and logs the run to W&B. A model is registered only when the quality gate passes, and a person moves `prod`. See [docs/RETRAIN.md](docs/RETRAIN.md).
+
 ## Monitoring
 The live service sends its answers to Weights & Biases so the team can see when the model stops helping.
 
@@ -424,11 +427,11 @@ Five ideas, in the order I would take them. Each says what it is, why it is not 
 ├── TEAM_BRIEF.md         # agreed settings, decisions, owners
 ├── config.yaml           # every non-secret setting
 ├── environment.yml       # conda environment
-├── docs/                 # MODULE_SPECS.md: the module contract
+├── docs/                 # MODULE_SPECS.md: the module contract; DEPLOY.md, RETRAIN.md: runbooks
 ├── scripts/              # fetch_prices.py: makes the price snapshot; monitor_report.py: weekly drift and fallback run
 ├── src/                  # one module per job, main.py runs them all
 ├── tests/                # automated tests
-└── .github/workflows/    # ci.yml: lint-and-test
+└── .github/workflows/    # ci.yml: lint-and-test; deploy.yml; retrain.yml
 ```
 
 ## Team and module owners
