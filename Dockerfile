@@ -29,7 +29,7 @@ ENV PYTHONUNBUFFERED=1 \
 # base image's own (it calls itself "latest").
 ARG GIT_COMMIT=local
 ARG APP_VERSION=dev
-ENV RENDER_GIT_COMMIT=$GIT_COMMIT \
+ENV APP_COMMIT=$GIT_COMMIT \
     APP_VERSION=$APP_VERSION
 LABEL org.opencontainers.image.revision=$GIT_COMMIT \
       org.opencontainers.image.version=$APP_VERSION \

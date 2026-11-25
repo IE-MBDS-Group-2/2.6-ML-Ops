@@ -80,7 +80,7 @@ Robustness checks:
 - A 12-month shadow period with no market drawdown is reported as "inconclusive", not "passed".
 - Optional input: a public market-stress indicator (VIX vs VIX3M, or recent volatility vs its normal level), used as a model input or to trigger the fallback. It also gives the drift monitor alert a concrete number.
 
-Rough cost (ALL ESTIMATES): course build by the 4 to 5 person team, part-time, about 6 weeks. At a firm: 1 ML engineer (half-time, 12 weeks) plus the quant analyst (a quarter of their time), then about a tenth of one person's time to run and monitor. Infrastructure: laptop CPU for training, GitHub Actions, W&B, Render free or lowest tier, under €50 per month.
+Rough cost (ALL ESTIMATES): course build by the 4 to 5 person team, part-time, about 6 weeks. At a firm: 1 ML engineer (half-time, 12 weeks) plus the quant analyst (a quarter of their time), then about a tenth of one person's time to run and monitor. Infrastructure: laptop CPU for training, GitHub Actions, W&B, a small self-hosted container, under €50 per month.
 
 | Risk | Mitigation |
 | --- | --- |
@@ -334,7 +334,7 @@ Then open `http://127.0.0.1:8000/docs` for the interactive page, where you can t
 | `WANDB_MODE` | `online`, `offline` or `disabled` |
 | `WANDB_API_KEY` | your **own** key, only for `wandb` or `online` (team `ie-mbds-group-2`, ask Miguel for an invite) |
 | `WANDB_ENTITY`, `WANDB_MODEL_ALIAS`, `APP_VERSION` | the W&B team, the model alias (`prod`) and the release name shown by `/health` |
-| `RENDER_GIT_COMMIT` | the deployed commit, shown by `/health` as `commit`. The release image has it baked in (the name is kept from the first hosting plan); leave it as `local` on your machine |
+| `APP_COMMIT` | the deployed commit, shown by `/health` as `commit`. The release image has it baked in; leave it as `local` on your machine |
 
 **No model yet?** No model has passed the gate, so none is saved. The service still starts and answers with today's rule, with `fallback: true` and the reason in plain words.
 

@@ -94,7 +94,7 @@ def test_integration_health_with_and_without_a_model(start_app, fitted_model):
 
 def test_unit_health_reports_version_and_commit(start_app, monkeypatch):
     monkeypatch.setenv("APP_VERSION", "v1.1.0")
-    monkeypatch.setenv("RENDER_GIT_COMMIT", "abc1234")
+    monkeypatch.setenv("APP_COMMIT", "abc1234")
     with start_app(None) as client:
         body = client.get("/health").json()
     assert body["version"] == "v1.1.0"
@@ -104,7 +104,7 @@ def test_unit_health_reports_version_and_commit(start_app, monkeypatch):
 
 def test_unit_health_defaults_version_dev_and_commit_local(start_app, monkeypatch):
     monkeypatch.delenv("APP_VERSION", raising=False)
-    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("APP_COMMIT", raising=False)
     monkeypatch.setattr(api.config, "PROJECT_ROOT", api.config.PROJECT_ROOT / "no-such-folder")
     with start_app(None) as client:
         body = client.get("/health").json()
