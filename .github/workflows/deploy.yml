@@ -6,7 +6,10 @@
 # Flow      check the ref -> CI on that commit (ci.yml) -> build with the commit and version baked in
 #           -> push ghcr.io/<org>/etf-rebalancing-api:<sha>, :<tag> and :release -> the host (pull model) picks up :release
 #           -> smoke test the live URL until /health reports that commit
-# Variables SERVICE_URL (repository variable): the public address of the service. No secrets: GITHUB_TOKEN pushes
+# Variables SERVICE_URL (repository variable): the public address of the service. GITHUB_TOKEN pushes
+# Model     publish bakes in the W&B version the alias prod points to (scripts/fetch_prod_model.py), so a release
+#           ships code and model together and a rollback rolls back both. Needs secret WANDB_API_KEY (read only)
+#           and variable WANDB_ENTITY
 # Runbook   docs/DEPLOY.md (set-up, dry run, release, rollback)
 #
 # Why the commit: the host keeps the old container serving until the new one is healthy (canary on a side port),
@@ -78,10 +81,32 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: echo "$TOKEN" | docker login "$REGISTRY" -u "$ACTOR" --password-stdin
 
-      - name: Build once, with the commit and version baked in
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The fetch needs only wandb and PyYAML, at the versions conda-lock.yml pins (no full environment).
+      - name: Install the model fetch's two packages
+        run: |
+          pin() { grep -A1 "^- name: $1\$" conda-lock.yml | sed -n 's/^  version: //p' | head -1; }
+          python -m pip install --quiet "wandb==$(pin wandb)" "pyyaml==$(pin pyyaml)"
+
+      # A person moved the W&B alias prod; this bakes THAT version in. Read-only: it never moves an alias.
+      # No version has prod: MODEL_VERSION is empty and the image serves today's rule. A bad key or entity fails here.
+      - name: Fetch the model the prod alias points to
+        id: model
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          WANDB_ENTITY: ${{ vars.WANDB_ENTITY }}
+        run: python -m scripts.fetch_prod_model
+
+      - name: Build once, with the commit, version and model baked in
+        env:
+          MODEL_VERSION: ${{ steps.model.outputs.MODEL_VERSION }}
         run: |
           docker build --build-arg GIT_COMMIT="$GITHUB_SHA" --build-arg APP_VERSION="$GITHUB_REF_NAME" \
-            -t "$IMAGE:$GITHUB_SHA" .
+            --build-arg MODEL_VERSION="$MODEL_VERSION" -t "$IMAGE:$GITHUB_SHA" .
+          echo "Model in the image: ${MODEL_VERSION:-none, the image serves today's rule}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Push the commit tag and the release tag, then move :release (the host follows it)
         run: |

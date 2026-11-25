@@ -17,7 +17,11 @@ credentials from GitHub, CI never needs access to the host, and no port is open 
 ## One-time set-up (admin)
 
 1. **Repository variable** (Settings -> Secrets and variables -> Actions -> Variables): `SERVICE_URL` =
-   `https://etf-api.mpholdings.co` (no trailing `/`). No secret is needed: the workflow pushes with its own token.
+   `https://etf-api.mpholdings.co` (no trailing `/`), and `WANDB_ENTITY` = `ie-mbds-group-2`. The workflow pushes to
+   GHCR with its own token.
+   **Repository secret** (same page, Secrets): `WANDB_API_KEY`, a key that can read the W&B project. The publish
+   job only reads the model the alias `prod` points to; it never moves an alias. Without the variable and the
+   secret the publish job stops before building.
 2. **Organisation:** Settings -> Packages: allow members to create public packages, and allow GitHub Actions to
    publish packages for this repository.
 3. **After the first push** (the dry run below): Organisation -> Packages -> `etf-rebalancing-api` -> Package settings ->
@@ -39,9 +43,12 @@ credentials from GitHub, CI never needs access to the host, and no port is open 
 
 ## Release
 
-1. Release PR `dev` into `main`, approved, merge commit.
-2. GitHub -> Releases -> Draft a new release -> tag `vX.Y.Z` on `main` -> notes -> **Publish**.
-3. Watch Actions -> deploy; the run summary has the live links. By hand: `/health` shows the new version and commit;
+1. In W&B, move the alias `prod` to the model version to ship (it must have passed the gate). Skip this to keep
+   the current `prod`; with no `prod` at all the image serves today's rule.
+2. Release PR `dev` into `main`, approved, merge commit.
+3. GitHub -> Releases -> Draft a new release -> tag `vX.Y.Z` on `main` -> notes -> **Publish**.
+4. Watch Actions -> deploy; the run summary names the model baked in and has the live links. By hand: `/health`
+   shows the new version, commit and `model_version`;
    `/docs` opens; `scripts/sample_request.json` to `/predict` answers 200.
 
 ## Rollback
@@ -51,9 +58,9 @@ credentials from GitHub, CI never needs access to the host, and no port is open 
 2. The run skips the build: it points `:release` at that tag's existing image (the exact image released then) and
    smoke-tests it. The host swaps it in like any release.
 
-To roll back only the model (the code is fine): in W&B move the alias `prod` back to the previous model version,
-then restart the container on the host. The API loads whatever `prod` points to at start-up (with
-`MODEL_SOURCE=wandb`; today the service runs `MODEL_SOURCE=local` and serves today's rule).
+Each release image carries its own model (the version `prod` pointed to at release time), so a rollback puts back
+code and model together. Afterwards move `prod` in W&B back to that model too, so the next release does not ship
+the bad one again. To roll back only the model: move `prod` back, then publish a new patch release.
 
 ## When it goes wrong
 

@@ -345,6 +345,7 @@ Then open `http://127.0.0.1:8000/docs` for the interactive page, where you can t
 | `WANDB_API_KEY` | your **own** key, only for `wandb` or `online` (team `ie-mbds-group-2`, ask Miguel for an invite) |
 | `WANDB_ENTITY`, `WANDB_MODEL_ALIAS`, `APP_VERSION` | the W&B team, the model alias (`prod`) and the release name shown by `/health` |
 | `APP_COMMIT` | the deployed commit, shown by `/health` as `commit`. The release image has it baked in; leave it as `local` on your machine |
+| `MODEL_VERSION` | the W&B version of a local model file, shown by `/health` as `model_version` (e.g. `rebalance-model:v7`). The release image has it baked in; leave it empty on your machine, and `/health` shows `local:model.joblib` |
 
 **No model yet?** No model has passed the gate, so none is saved. The service still starts and answers with today's rule, with `fallback: true` and the reason in plain words.
 
@@ -388,10 +389,21 @@ docker run --rm -p 8000:8000 -e MODEL_SOURCE=local etf-advisor
 ```
 Then open `http://localhost:8000/health` (or `/docs`). Stop it with Ctrl+C.
 
-- **Contents:** only `config.yaml`, `conda-lock.yml` and `src/` (`.dockerignore` is an allow-list). `.env`, `data/`, `models/` and `tests/` never enter the image. Pass settings as environment variables (`-e NAME=value`), as the host does.
+- **Contents:** only `config.yaml`, `conda-lock.yml`, `src/` and `models/model.joblib` when it exists (`.dockerignore` is an allow-list). `.env`, `data/`, other files in `models/` and `tests/` never enter the image. Locally that is whatever model your last run saved; a release carries the W&B `prod` version (next section). Pass settings as environment variables (`-e NAME=value`), as the host does.
 - **Platform:** the image is built for `linux/amd64`, the platform the lock file and the host use. On an Apple Silicon Mac Docker emulates it, which is slower but gives the same result.
 - **Size:** about 1.5 GB (the scientific stack, W&B, and the dev tools that share the lock file).
 - **Changing packages:** edit `environment.yml`, then run `conda-lock -f environment.yml -p linux-64` and commit both files.
+
+## Release a model
+A release ships one image with the code and the model together, so a rollback rolls back both.
+
+1. **Choose the model (a person, in W&B).** Open the model artifact `rebalance-model` in project `etf-rebalancing`, pick the version that passed the quality gate, and move the alias `prod` to it.
+2. **Publish the release (a person, on GitHub).** Merge the release PR from `dev` into `main`, then publish a GitHub Release on a tag from `main` (`docs/DEPLOY.md`, "Release").
+3. **Automation does the rest.** The deploy workflow runs `scripts/fetch_prod_model.py`, which resolves `prod` to a concrete version (e.g. `rebalance-model:v7`) and downloads it. It builds the image with that model and `MODEL_VERSION`, pushes it to GHCR, and the host switches to it. `/health` then reports `model_version: rebalance-model:v7`.
+
+If no version carries `prod`, the release still goes out: the image has no model and serves today's rule (`model_version: rule`). A wrong W&B key or entity stops the release instead. The fetch is read-only: only a person moves `prod`.
+
+Check by hand before a release: `WANDB_API_KEY=... WANDB_ENTITY=ie-mbds-group-2 python -m scripts.fetch_prod_model` prints the version it would ship.
 
 ## Monitoring
 The live service sends its answers to Weights & Biases so the team can see when the model stops helping.
