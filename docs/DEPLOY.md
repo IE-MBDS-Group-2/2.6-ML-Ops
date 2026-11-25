@@ -63,6 +63,7 @@ then restart the container on the host. The API loads whatever `prod` points to 
 | Smoke test waits, commit never changes | the host could not pull (package private) or refused the canary | set-up step 3; host journal and alerts |
 | Smoke test: wrong version | the image was built without `APP_VERSION` | check the `publish` step's build arguments |
 | Rollback: no image for the tag | that tag was released before this workflow existed | release it again, or pick a newer tag |
+| Smoke test: `HTTP 403: error code: 1010` | the Cloudflare edge (the smoke test sends `User-Agent: etf-smoke-test/1`) | check the Cloudflare status page, then re-run the failed smoke-test job |
 | `/predict` answers but not from outside | Cloudflare or ISP blocking (e.g. during LaLiga broadcasts in Spain) | try another network; check the tunnel |
 
 ## Public paths
