@@ -2,13 +2,13 @@
 main.py  [Step 0: ORCHESTRATOR]
 ================================
 Purpose   Run the whole pipeline, in order, with one command: python -m src.main
-Owns      Step order, the date-based split, passing data between steps
-Never     Config parsing (config.py), logging set-up details (logger.py), or any cleaning, feature or model
-          logic. main.py only CALLS other modules
+Owns      Step order, passing data between steps
+Never     Config parsing (config.py), logging set-up details (logger.py), or any cleaning, split, feature or
+          model logic. main.py only CALLS other modules
 
 Flow
     config.yaml + .env -> tracking (start run) -> load_data -> clean_data -> validate -> to_wide -> features
-      -> portfolio (decision table) -> _split_by_date (train / validation / test sealed)
+      -> portfolio (decision table) -> split.split_by_date (train / validation / test sealed)
       -> train (model.type: the classifier, or the reinforcement learning agent: 5 seeds, the median one)
       -> evaluate: quality gate, guards and rule challengers (validation)
            gate met:     test audit once -> save model -> register it (tracking)
@@ -29,14 +29,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
-from src import (benchmarks, clean_data, config, evaluate, features, infer,
-                 load_data)
+from src import (allocation, benchmarks, clean_data, config, evaluate,
+                 features, infer, load_data)
 from src import logger as log_setup
-from src import (portfolio, rl_agent, robustness, rules, selection, tracking,
-                 trades, train, utils, validate)
+from src import (portfolio, rl_agent, robustness, rules, selection, split,
+                 tracking, trades, train, utils)
 
 logger = logging.getLogger(__name__)
 
@@ -46,83 +45,14 @@ CONFIG_PATH = config.CONFIG_PATH
 
 def split_data(X: pd.DataFrame, y: pd.Series, test_size: float, val_size: float,
                random_state: int, stratify: bool) -> tuple:
-    """Course contract: random split into train, validation and test.
+    """Course contract: random split into train, validation and test (the work is in split.split_data).
 
-    Inputs:  X, y; test_size and val_size as shares of the WHOLE dataset; random_state;
-             stratify (keep class shares in every split, classification only).
+    Inputs:  X, y; test_size and val_size as shares of the WHOLE dataset; random_state; stratify.
     Outputs: (X_train, X_val, X_test, y_train, y_val, y_test).
-    Why:     kept and tested for the course contract. Our pipeline uses _split_by_date instead,
-             because a random split of weekly decisions would leak future prices
-             (TEAM_BRIEF Decisions).
-    Raises:  ValueError for sizes outside (0, 1), sizes that sum to 1 or more, or X and y of
-             different lengths.
+    Why:     the course contract names main.split_data; the pipeline itself splits by date (split.split_by_date).
+    Raises:  ValueError, as split.split_data.
     """
-    if not (0 < test_size < 1 and 0 < val_size < 1) or test_size + val_size >= 1:
-        raise ValueError(
-            f"test_size ({test_size}) and val_size ({val_size}) must each be between 0 and 1 "
-            "and sum to less than 1."
-        )
-    if len(X) != len(y):
-        raise ValueError(f"X and y must have the same number of rows, got {len(X)} and {len(y)}.")
-    # Exact row counts, not fractions: 0.15 / 0.85 * 85 is 15.000000000000002, which sklearn
-    # rounds up to 16.
-    X_rest, X_test, y_rest, y_test = train_test_split(
-        X, y, test_size=round(test_size * len(X)), random_state=random_state,
-        stratify=y if stratify else None,
-    )
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_rest, y_rest, test_size=round(val_size * len(X)), random_state=random_state,
-        stratify=y_rest if stratify else None,
-    )
-    logger.info("Split %d rows into train %d, validation %d, test %d",
-                len(X), len(X_train), len(X_val), len(X_test))
-    return X_train, X_val, X_test, y_train, y_val, y_test
-
-
-def _split_by_date(table: pd.DataFrame, train_end: str, val_end: str) -> tuple:
-    """Split the decision table by date: train to train_end, validation to val_end, test after.
-
-    Inputs:  table indexed by decision date (DatetimeIndex); train_end and val_end as YYYY-MM-DD,
-             both inclusive.
-    Outputs: (train, validation, test) DataFrames; every row is in exactly one of them.
-    Why:     the model is judged on later years than it learned from, as it would be in operation.
-    Raises:  ValueError if the index is not dates, val_end is not after train_end, or a split
-             is empty.
-    """
-    if not isinstance(table.index, pd.DatetimeIndex):
-        raise ValueError("_split_by_date needs a table indexed by date (DatetimeIndex).")
-    train_cut, val_cut = pd.Timestamp(train_end), pd.Timestamp(val_end)
-    if val_cut <= train_cut:
-        raise ValueError(
-            f"val_end ({val_end}) must be after train_end ({train_end}) in config.yaml.")
-    train_rows = table[table.index <= train_cut]
-    val_rows = table[(table.index > train_cut) & (table.index <= val_cut)]
-    test_rows = table[table.index > val_cut]
-    for name, part in (("train", train_rows), ("validation", val_rows), ("test", test_rows)):
-        if part.empty:
-            raise ValueError(f"The {name} split is empty. Check the split dates in config.yaml.")
-    logger.info("Date split: train %d, validation %d, test %d rows",
-                len(train_rows), len(val_rows), len(test_rows))
-    return train_rows, val_rows, test_rows
-
-
-def _load_prices(path: Path, cfg: dict) -> pd.DataFrame:
-    """Read one long price file, clean it, and stop here if the data is not trustworthy.
-
-    Inputs:  path, a long file (date, ticker, close, volume); cfg, the full config (reads data).
-    Outputs: the clean long table.
-    Why:     training and inference data go through the same three steps, so they cannot differ.
-    Raises:  FileNotFoundError, ValueError (from load_data and validate).
-    """
-    cols = cfg["data"]["columns"]
-    clean = clean_data.clean_dataframe(
-        load_data.load_raw_data(path), date_column=cols["date_column"],
-        sort_by=[cols["date_column"], cols["ticker_column"]])
-    validate.validate_dataframe(
-        clean, cfg["data"]["required_columns"], tickers=cfg["data"]["tickers"],
-        max_abs_daily_return=cfg["data"]["max_abs_daily_return"], price_columns=cols,
-    )
-    return clean
+    return split.split_data(X, y, test_size, val_size, random_state, stratify)
 
 
 def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
@@ -130,6 +60,7 @@ def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
 
     Inputs:  clean, the validated long table; cfg, the full config (reads data and features).
     Outputs: (close_wide, volume_wide, market_features), all date x column and on one calendar.
+    Why:     training, validation and inference all build their market tables the same way, from one place.
     """
     tickers, cols = cfg["data"]["tickers"], cfg["data"]["columns"]
     close_wide = clean_data.to_wide(clean, cols["close_column"], tickers, cols["date_column"], cols["ticker_column"])
@@ -141,8 +72,13 @@ def _market_inputs(clean: pd.DataFrame, cfg: dict) -> tuple:
 
 
 def _target_weights(cfg: dict) -> pd.Series:
-    """The model portfolio's target weights from config.yaml."""
-    return pd.Series(cfg["target_weights"]["policy"], dtype=float)
+    """The model portfolio's target weights from config.yaml.
+
+    Inputs:  cfg, the full config (reads target_weights.method and the stored weights).
+    Outputs: the target weight per ticker, as a Series.
+    Why:     every step uses the same stored target, so it is read in one place.
+    """
+    return allocation.stored_target(cfg["target_weights"]["method"], cfg)
 
 
 def _feature_columns(table: pd.DataFrame, cfg: dict) -> list[str]:
@@ -164,8 +100,8 @@ def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
     Why:     the test years are split off here and never touched again: they stay sealed.
     """
     target_column = cfg["problem"]["target_column"]
-    labelled = table.dropna(subset=[target_column])
-    train_rows, val_rows, _sealed_test = _split_by_date(
+    labelled = clean_data.drop_unlabelled_rows(table, target_column)
+    train_rows, val_rows, _sealed_test = split.split_by_date(
         labelled, cfg["split"]["train_end"], cfg["split"]["val_end"])
     columns = _feature_columns(table, cfg)
     model = train.train_model(
@@ -179,9 +115,19 @@ def _train_and_score(table: pd.DataFrame, cfg: dict) -> tuple:
 
 
 def _model_policy(model: Pipeline, columns: list[str]) -> Callable[[pd.Series], float]:
-    """Wrap the fitted model as a policy: a function from a state row to an action."""
+    """Wrap the fitted model as a policy: a function from a state row to an action.
+
+    Inputs:  model, the fitted model or agent; columns, its feature column names.
+    Outputs: a function that takes one decision-date row and returns the model's action as a float.
+    Why:     portfolio.simulate runs any policy the same way, so the model and today's rule share one simulator.
+    """
     def policy(state_row: pd.Series) -> float:
-        """The model's action for one decision date."""
+        """The model's action for one decision date.
+
+        Inputs:  state_row, one row of the decision table (it must contain the feature columns).
+        Outputs: the predicted action as a float.
+        Why:     it is the form of policy that portfolio.simulate calls on every decision date.
+        """
         return float(model.predict(state_row[columns].to_frame().T.astype(float))[0])
     return policy
 
@@ -251,32 +197,34 @@ def _candidate(table: pd.DataFrame, market_data: tuple, cfg: dict) -> tuple:
     return model, columns, {**scores, "model_type": kind}
 
 
-def _period(cfg: dict, split: str) -> tuple[str, str]:
+def _period(cfg: dict, period_name: str) -> tuple[str, str]:
     """The first and last date of the validation or the test years, from the split section.
 
-    Inputs:  cfg, the full config (reads split and data); split, "validation" or "test".
+    Inputs:  cfg, the full config (reads split and data); period_name, "validation" or "test".
     Outputs: (start, end) as YYYY-MM-DD; start is the day after the previous period ends.
-    Raises:  ValueError for any other split name.
+    Why:     the gate and the test audit need each period's dates from config.yaml alone, never typed twice.
+    Raises:  ValueError for any other period name.
     """
     ends = {"validation": ("train_end", "val_end"), "test": ("val_end", "test_end")}
-    if split not in ends:
-        raise ValueError(f"Unknown period {split!r}. Use 'validation' or 'test'.")
-    previous_end, end = (cfg["split"][key] for key in ends[split])
+    if period_name not in ends:
+        raise ValueError(f"Unknown period {period_name!r}. Use 'validation' or 'test'.")
+    previous_end, end = (cfg["split"][key] for key in ends[period_name])
     start = pd.Timestamp(previous_end) + pd.Timedelta(days=1)
     return str(start.date()), end
 
 
 def _validation_paths(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict,
-                      split: str = "validation") -> tuple:
+                      period_name: str = "validation") -> tuple:
     """Run the model and today's rule over one period through the same simulate.
 
     Inputs:  model and its feature columns; market_data (close_wide, volume_wide, market);
-             cfg, the full config (reads portfolio, split and costs); split, "validation" or "test".
+             cfg, the full config (reads portfolio, split and costs); period_name, "validation" or "test".
     Outputs: (agent_daily, baseline_daily), the daily frames of the two runs.
+    Why:     the model and today's rule are compared on the same dates, costs and simulator, so the gap is fair.
     """
     close_wide = market_data[0]
     target = _target_weights(cfg)
-    start, end = _period(cfg, split)
+    start, end = _period(cfg, period_name)
     start = str(close_wide.index[close_wide.index >= pd.Timestamp(start)][0].date())
     rule = portfolio.make_current_rule_policy(target, rules.review_dates(close_wide, start, end, cfg), cfg)
     agent_daily, _ = portfolio.simulate(
@@ -318,21 +266,21 @@ def _portfolio_report(daily: pd.DataFrame, market_data: tuple, cfg: dict) -> dic
     return report
 
 
-def _period_metrics(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, split: str,
+def _period_metrics(model: Pipeline, columns: list[str], market_data: tuple, cfg: dict, period_name: str,
                     challenger_values: dict[str, pd.Series] | None = None) -> tuple:
     """The model against today's rule and the simple-rule challengers over one period.
 
-    Inputs:  model and its feature columns; market_data; cfg, the full config; split, "validation" or "test".
+    Inputs:  model and its feature columns; market_data; cfg, the full config; period_name, "validation" or "test".
     Outputs: metrics, challenger table and the daily agent and baseline paths.
              When requested, challenger_values receives the daily challenger values.
     Why:     validation and the one-time test audit are measured by exactly the same code.
     """
-    agent_daily, baseline_daily = _validation_paths(model, columns, market_data, cfg, split)
+    agent_daily, baseline_daily = _validation_paths(model, columns, market_data, cfg, period_name)
     agent, baseline = (_portfolio_report(daily, market_data, cfg) for daily in (agent_daily, baseline_daily))
     value, met = _check_quality_gate(agent, baseline, cfg)
     gate = cfg["quality_gate"]
     metrics = {
-        "split": split, "agent": agent, "baseline": baseline, gate["metric_key"]: value,
+        "split": period_name, "agent": agent, "baseline": baseline, gate["metric_key"]: value,
         "gate": {"comparison": gate["comparison"], "threshold": gate["threshold"], "met": met},
         "guards": evaluate.guard_report(agent, baseline, cfg["guards"]),
     }
@@ -365,6 +313,7 @@ def _numbers(metrics: dict, prefix: str = "") -> dict[str, float]:
 
     Inputs:  metrics, a nested dictionary; prefix, the path so far.
     Outputs: only the numeric leaves (True and False count as 1 and 0); text and lists are left out.
+    Why:     the tracker logs flat name -> number pairs, not nested dictionaries.
     """
     flat = {}
     for key, value in metrics.items():
@@ -385,9 +334,9 @@ def _recommendations(model: Pipeline | None, columns: list[str], cfg: dict) -> p
              every row is today's rule (decision D8), and says so with fallback = True.
     Raises:  FileNotFoundError, ValueError (data checks, or too few days for the features).
     """
-    clean = _load_prices(PROJECT_ROOT / cfg["paths"]["inference_data"], cfg)
+    clean = load_data.load_prices(PROJECT_ROOT / cfg["paths"]["inference_data"], cfg)
     close_wide, volume_wide, market = _market_inputs(clean, cfg)
-    ready = market.dropna().index
+    ready = features.dates_with_every_feature(market)
     if ready.empty:
         raise ValueError(
             "The inference file is too short to compute the market features. "
@@ -396,7 +345,7 @@ def _recommendations(model: Pipeline | None, columns: list[str], cfg: dict) -> p
         close_wide, volume_wide, market, _target_weights(cfg),
         str(ready[0].date()), str(close_wide.index[-1].date()), cfg)
     rule_actions = table[portfolio.RULE_ACTION_COLUMN]
-    if model is None:
+    if model is None or cfg["target_weights"]["method"] != "policy":
         predictions = pd.DataFrame({"prediction": rule_actions, "probability": 0.0}, index=table.index)
         return infer.apply_fallback(predictions, rule_actions, pd.Series(True, index=table.index),
                                     cfg["fallback"]["min_probability"])
@@ -421,11 +370,12 @@ def _keep_or_drop_model(model: Pipeline, metrics: dict, paths: dict, cfg: dict, 
             logger.warning("Removed %s: it is from an earlier run and no model passed the gate now", paths["model"])
         logger.warning("No model saved or registered: the quality gate is not met. Today's rule serves")
         return None
+    model.target_metadata_ = allocation.model_target(cfg)
     utils.save_model(model, paths["model"])
     key = cfg["quality_gate"]["metric_key"]
     tracking.log_model(tracker, paths["model"], cfg["tracking"]["model_artifact"],
                        {key: metrics[key], "gate": metrics["gate"], "challenger": metrics["challenger"]["name"],
-                        "model_type": metrics["model_type"]})
+                        "model_type": metrics["model_type"], "target": model.target_metadata_})
     return model
 
 
@@ -436,6 +386,8 @@ def _validation_report(fitted: tuple, market_data: tuple, cfg: dict, paths: dict
              paths; tracker, the tracking run or None.
     Outputs: (metrics, chosen): the metrics dictionary and the name of the selected rule. Also writes the
              challengers table and sends the numbers to the tracker.
+    Why:     validation is the only place the gate, guards and challenger choice are decided, so they are
+             measured together once and the test years stay sealed.
     """
     model, columns, scores = fitted
     metrics, challengers, _daily_paths = _period_metrics(model, columns, market_data, cfg, "validation")
@@ -474,12 +426,18 @@ def _write_robustness(model: Pipeline, columns: list[str], market_data: tuple, c
     Why: Record diagnostics without using them to change the validation gate or release decision.
     """
     validation_end = cfg["split"]["val_end"]
-    history = tuple(frame.loc[:validation_end] for frame in market_data)
+    history = split.up_to_date(market_data, validation_end)
     ceiling = robustness.feasibility_ceiling(
         history, _target_weights(cfg), cfg, cfg["portfolio"]["first_decision_date"], validation_end)
 
     def run_policy(settings: dict) -> pd.DataFrame:
-        """Return aligned validation values for the selected trading cost settings."""
+        """Return aligned validation values for the selected trading cost settings.
+
+        Inputs:  settings, a config dictionary with the trading cost settings to try (passed on as the cfg).
+        Outputs: a table of daily validation values with columns agent_value and baseline_value.
+        Why:     robustness.cost_sensitivity needs one function from settings to values, to re-run the same
+                 comparison under each cost assumption.
+        """
         agent, baseline = _validation_paths(model, columns, history, settings)
         return pd.DataFrame({"agent_value": agent["value"], "baseline_value": baseline["value"]})
 
@@ -505,8 +463,8 @@ def _select_model_params(table: pd.DataFrame, market_data: tuple, cfg: dict,
     if not cfg["selection"]["enabled"]:
         return cfg
     cutoff = cfg["split"]["train_end"]
-    training_market = tuple(frame.loc[:cutoff] for frame in market_data)
-    best, trials = selection.grid_search(table.loc[:cutoff], training_market, cfg, tracker)
+    training_market = split.up_to_date(market_data, cutoff)
+    best, trials = selection.grid_search(split.up_to_date(table, cutoff), training_market, cfg, tracker)
     utils.save_csv(trials, paths["selection"])
     comparison = selection.frequency_comparison(market_data, cfg, best)
     utils.save_csv(comparison, paths["frequency_comparison"])
@@ -549,11 +507,11 @@ def _positions_action(approved: Pipeline | None, columns: list[str], weights: pd
              rebalance, so both start at 0.
     """
     close_wide, volume_wide, market = _market_inputs(
-        _load_prices(PROJECT_ROOT / cfg["paths"]["inference_data"], cfg), cfg)
+        load_data.load_prices(PROJECT_ROOT / cfg["paths"]["inference_data"], cfg), cfg)
     state = portfolio.live_state(close_wide, volume_wide, market, weights, 0.0, 0,
                                  _target_weights(cfg).reindex(weights.index), cfg)
     rule = state[portfolio.RULE_ACTION_COLUMN]
-    if approved is None:
+    if approved is None or cfg["target_weights"]["method"] != "policy":
         return float(rule.iloc[0])
     inputs = state[columns]
     answer = infer.apply_fallback(infer.run_inference(approved, inputs, include_proba=True), rule,
@@ -611,7 +569,8 @@ def run(cfg: dict, tracker: object = None) -> dict:
     """
     paths = config.resolve_paths(cfg, PROJECT_ROOT)
     # 1. Load, clean and validate the raw prices; keep the clean table and record it as the data version.
-    clean = _load_prices(paths["raw_data"], cfg)
+    config.check_target_snapshot(cfg, paths["raw_data"])
+    clean = load_data.load_prices(paths["raw_data"], cfg)
     utils.save_csv(clean, paths["processed_data"])
     tracking.log_dataset(tracker, paths["processed_data"], cfg["tracking"]["dataset_artifact"])
     # 2. Wide prices and market features, then the decision table with the best_action label.

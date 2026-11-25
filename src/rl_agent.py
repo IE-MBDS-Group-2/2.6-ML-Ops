@@ -48,8 +48,12 @@ class QAgent:
                  actions: list[float], temperature: float, typical_gap: float = 1.0) -> None:
         """Keep the fitted regressor and what it needs to score a state for every action.
 
-        typical_gap is the usual distance between the best and the second-best Q value on the states the agent
-        learned from (fit_q_agent sets it). predict_proba measures every gap against it.
+        Inputs:  regressor, the fitted model of Q(state, action); feature_columns, the state columns it reads;
+                 actions, the allowed actions; temperature, how sharp predict_proba is (rl.temperature);
+                 typical_gap, the usual distance between the best and the second-best Q value on the states
+                 the agent learned from (fit_q_agent sets it). predict_proba measures every gap against it.
+        Outputs: None; the values are stored on the agent (classes_ holds the sorted actions).
+        Why:     the agent must carry everything needed to score a new state, so serving needs nothing else.
         """
         self.regressor = regressor
         self.feature_columns = list(feature_columns)
@@ -62,6 +66,7 @@ class QAgent:
 
         Inputs:  X, one row per state, holding the feature columns.
         Outputs: frame with X's index and one column per action.
+        Why:     every decision (predict, predict_proba, the fitted-Q update) is made from these values.
         Raises:  ValueError naming any feature column that is missing.
         """
         missing = [column for column in self.feature_columns if column not in X.columns]
@@ -73,7 +78,12 @@ class QAgent:
         return pd.DataFrame(values, index=X.index)
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
-        """The best action per row; a tie goes to the smaller action (it trades less)."""
+        """The best action per row; a tie goes to the smaller action (it trades less).
+
+        Inputs:  X, one row per state, holding the feature columns.
+        Outputs: array with one action per row.
+        Why:     gives the agent the predict method of a scikit-learn classifier, so callers need no change.
+        """
         return self.classes_[self.q_values(X).to_numpy().argmax(axis=1)]
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
@@ -101,7 +111,12 @@ def _random_policy(actions: list[float], rng: np.random.Generator) -> Callable[[
     Why:     the agent can only learn the value of an action it has seen tried in many states.
     """
     def policy(_state_row: pd.Series) -> float:
-        """One random action, whatever the state."""
+        """One random action, whatever the state.
+
+        Inputs:  _state_row, the state (ignored).
+        Outputs: one of the actions, chosen uniformly at random.
+        Why:     exploration must not depend on what the agent has learned so far.
+        """
         return float(rng.choice(actions))
     return policy
 

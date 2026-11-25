@@ -15,7 +15,7 @@ data/raw/prices.csv (date, ticker, close, volume; long format)
   -> features.compute_market_features   (4w and 12w returns, 20d vol, per ETF, no look-ahead)
   -> portfolio.build_decision_table     (one row per Friday: state + market features + label best_action,
                                           simulated along the current rule's path)
-  -> main._split_by_date                (train 2007-09 to 2019 / validation 2020-21 / test 2022-25 sealed)
+  -> split.split_by_date               (train 2007-09 to 2019 / validation 2020-21 / test 2022-25 sealed)
   -> features.get_feature_preprocessor  (unfitted imputer + scaler)
   -> train.train_model                  (Pipeline: preprocess + LogisticRegression)
   -> evaluate.evaluate_model            (accuracy, f1_macro on validation)
@@ -243,8 +243,8 @@ Tests:
 ## main.py (Miguel)
 
 ```python
-def split_data(X, y, test_size: float, val_size: float, random_state: int, stratify: bool) -> tuple  # contract, kept and tested
-def _split_by_date(table: pd.DataFrame, train_end: str, val_end: str) -> tuple                      # used by the pipeline
+def split_data(X, y, test_size: float, val_size: float, random_state: int, stratify: bool) -> tuple  # contract; calls split.split_data
+# the split itself lives in src/split.py: split_data (random, contract), split_by_date (the pipeline), up_to_date
 def main() -> None                                                                                   # contract
 ```
 
@@ -256,7 +256,7 @@ def main() -> None                                                              
 
 Tests:
 - `split_data` sizes with no overlap.
-- `_split_by_date` boundaries.
+- `split.split_by_date` boundaries (tests/test_split.py).
 - A missing raw file exits 1.
 - **Pipeline test:** synthetic prices for 5 tickers over about 3 years in `tmp_path`, with config paths and dates
   patched. Then the 4 outputs exist, the model reloads, and there's one prediction row per inference decision date.
@@ -278,7 +278,7 @@ Every rule from Stage 2 still applies: typed and documented functions, a logger 
         pass: test audit, save, register (tracking) ----------+
         fail: nothing saved; today's rule serves (D8)
 
- DELIVERY  feature --PR--> dev --PR--> main --GitHub Release--> deploy.yml --> Render --> smoke_test.py
+ DELIVERY  feature --PR--> dev --PR--> main --GitHub Release--> deploy.yml --> GHCR :release --> host --> smoke_test.py
                    ci.yml          ci.yml   (lint, sample-data pipeline, tests, complexity, Docker build)
 ```
 
@@ -741,8 +741,10 @@ def explain(state_row: pd.Series, action: float, fallback: bool, cfg: dict) -> s
   outside the 5-point band" or "No trade: every holding is within 2 points of target".
 - Honest limits, enforced in code and written in the model card: the model is trained for the target set in
   config. With a calculated target the request falls back to the calendar-and-band rule (`fallback: true`,
-  reason given) unless the pipeline was retrained with that target. A calculated target changes the mandate the
-  Investment Committee approved, so the response always reports tracking error to the policy weights.
+  reason given). Calculated-target serving uses the rule even after research retraining with that target.
+  A calculated target changes the mandate the Investment Committee approved. The API reason reports
+  the fixed training-period tracking error to the policy weights stored at refit time.
+  The API and pipeline load reviewed weights from `target_weights.calculated`, refitted at each retrain.
 - **Three places catch a wrong value, all from `config.ALLOWED_VALUES`:** `load_config` at start-up; the API's
   request model (enumerations, so a wrong value is a 422 that lists the allowed ones and `/docs` shows a
   dropdown); and `resolve_target` / `resolve_policy`, which raise `ValueError` with the allowed list.
@@ -771,7 +773,7 @@ def explain(state_row: pd.Series, action: float, fallback: bool, cfg: dict) -> s
 app = FastAPI(title="ETF rebalancing advisor", version=APP_VERSION)
 @app.get("/health")   -> {"status": "ok", "model_loaded": bool, "model_version": str, "policy": "model" | "rule",
                           "version": str, "commit": str}
-# version: APP_VERSION (default "dev"); commit: RENDER_GIT_COMMIT, set by Render to the deployed commit
+# version: APP_VERSION (default "dev"); commit: APP_COMMIT, baked into the release image
 # (default "local"). model_version is "rule" when no model is loaded, so the deploy checks commit, not it.
 @app.post("/predict") -> PredictResponse
 ```
@@ -869,7 +871,7 @@ python scripts/smoke_test.py --url http://localhost:8000 [--expect-version v1.1.
   and commit both.
 - `Dockerfile`: pinned micromamba base image, install from `conda-lock.yml`, copy `config.yaml` and `src/` only,
   `EXPOSE 8000`, `HEALTHCHECK` that calls `/health` with Python's `urllib`, start with
-  `uvicorn src.api:app --host 0.0.0.0 --port ${PORT:-8000}` (Render sets `PORT`).
+  `uvicorn src.api:app --host 0.0.0.0 --port ${PORT:-8000}` (a host may set `PORT`).
 - `.dockerignore`: allow-list (ignore everything, then allow `config.yaml`, `conda-lock.yml`, `src/`). `.env`,
   `data/`, `models/`, `tests/`, `notebooks/` never enter the image.
 - Check: `docker build -t etf-advisor .`, `docker run -p 8000:8000 -e MODEL_SOURCE=local etf-advisor`, then
@@ -917,22 +919,26 @@ No secrets in CI. The job name stays `lint-and-test` (it is the required check i
 - `test_unit_error_marks_the_run_failed`: a step raising `ValueError`: `finish_run(run, failed=True)` and exit code 1
 - `test_unit_main_never_imports_wandb`: parse `src/main.py` with `ast`: no `wandb` import
 
-### deploy.yml and Render (Miguel)
+### deploy.yml (Miguel)
+
+Runbook: `docs/DEPLOY.md` (set-up, dry run, release, rollback). This section is the contract only.
 
 - Trigger: GitHub Release **published** (and `workflow_dispatch` from a tag, to roll back; from `dev` for the dry run).
-- Jobs: rerun the CI job on the released commit (`uses: ./.github/workflows/ci.yml`), then the deploy hook for that
-  exact commit (`$RENDER_DEPLOY_HOOK&ref=$GITHUB_SHA`), then
+- Flow: release -> CI on the released commit (`uses: ./.github/workflows/ci.yml`) -> one `docker build` with the
+  commit and version baked in -> push `ghcr.io/<org>/etf-rebalancing-api:<sha>`, `:<tag>` and `:release` -> the host
+  timer pulls `:release`, canary-tests it on a side port and swaps it in when `/health` is ok ->
   `python3 scripts/smoke_test.py --url "$SERVICE_URL" --expect-commit "$GITHUB_SHA" --timeout 900`.
-  The commit, not the tag: Render keeps the old instance serving until the new one is healthy, and
+  The commit, not the tag: the host keeps the old container serving until the new one is healthy, and
   `model_version` is `"rule"` while no model passes the gate.
-- Render: Docker web service from `main`, auto-deploy off (only the hook deploys), env vars from D11.
-- Rollback: re-run the workflow for the previous tag, or move the W&B `prod` alias back and restart.
+- No deploy secret: the workflow pushes with its own `GITHUB_TOKEN`; `SERVICE_URL` is a repository variable.
+- Rollback: run the workflow from the previous tag (it re-points `:release` to that tag's existing image), or move
+  the W&B `prod` alias back and restart.
 
 **Done checks (run each one and paste the output in the PR):**
 
 - A manual run (`workflow_dispatch`) deploys and the smoke-test step passes
 - A deliberately wrong `SERVICE_URL` (or `--expect-commit`) makes the workflow fail (then put it back)
-- The workflow log shows no secret value; the hook URL only comes from `secrets.RENDER_DEPLOY_HOOK`
+- The workflow log shows no secret value (there is none to show: only `GITHUB_TOKEN` is used)
 - Rollback steps in the README were followed once by someone who did not write them
 
 ### README model card and Stage 3 docs (Ricardo A.)

@@ -37,7 +37,12 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    """Read the command line: --answers, an optional CSV of logged answers used instead of W&B."""
+    """Read the command line: --answers, an optional CSV of logged answers used instead of W&B.
+
+    Inputs:  argv, the arguments after the script name (always passed in, never read from sys.argv here).
+    Outputs: the parsed options: answers (a Path, or None when --answers was not given).
+    Why:     an explicit argv keeps pytest's own arguments away from the parser and keeps main() testable.
+    """
     parser = argparse.ArgumentParser(description="Measure input drift and the fallback rate, and log them to W&B.")
     parser.add_argument("--answers", type=Path, default=None,
                         help="CSV of API answers (as_of, fallback); default: the serve runs in W&B")
@@ -65,7 +70,10 @@ def daily_returns(path: Path, cfg: dict) -> pd.DataFrame:
 def _answers(path: Path | None, cfg: dict, env: dict[str, str]) -> pd.DataFrame:
     """The logged API answers: from --answers when given, else from W&B; empty when W&B is off.
 
-    Why: the drift needs no W&B, so the run still reports it when there are no answers to read.
+    Inputs:  path, the --answers CSV or None; cfg, the full config (tracking.enabled, tracking.project);
+             env, the loaded environment settings (WANDB_MODE and the W&B login).
+    Outputs: a DataFrame of logged answers; empty when there is no file and tracking is off.
+    Why:     the drift needs no W&B, so the run still reports it when there are no answers to read.
     """
     if path is not None:
         return utils.load_csv(path)
@@ -82,6 +90,7 @@ def measure(cfg: dict, reference: pd.DataFrame, current: pd.DataFrame, answers: 
              (cut here to the train years); current, recent daily returns; answers, logged answers (may be empty).
     Outputs: a dictionary: limits, the weekly drift and fallback series, the PSI per ticker of the latest
              window, and drift_alert / fallback_alert.
+    Why:     drift and fallback are the two retrain triggers, so one summary holds both for the report and the W&B run.
     Raises:  ValueError if the recent data is shorter than monitoring.window_days.
     """
     settings = cfg["monitoring"]
@@ -111,8 +120,19 @@ def measure(cfg: dict, reference: pd.DataFrame, current: pd.DataFrame, answers: 
 
 
 def _report(summary: dict) -> dict:
-    """The summary with its two weekly tables turned into plain lists, ready for JSON."""
+    """The summary with its two weekly tables turned into plain lists, ready for JSON.
+
+    Inputs:  summary, the dictionary from measure (its weekly_drift and weekly_fallback_rate are tables).
+    Outputs: a copy of the summary whose two weekly tables are lists of records, with "week" as YYYY-MM-DD text.
+    Why:     DataFrames cannot be written as JSON, and the saved report must be readable without pandas.
+    """
     def rows(table: pd.DataFrame) -> list[dict]:
+        """One weekly table as a list of records.
+
+        Inputs:  table, a table indexed by week.
+        Outputs: one dictionary per week, with the week as its first 10 characters (YYYY-MM-DD).
+        Why:     the saved report holds plain values only.
+        """
         out = table.reset_index()
         out["week"] = out["week"].astype(str).str[:10]
         return out.to_dict(orient="records")
@@ -121,7 +141,13 @@ def _report(summary: dict) -> dict:
 
 
 def _log_to_wandb(summary: dict, cfg: dict, env: dict[str, str]) -> None:
-    """One W&B run of job type "monitor": the two charts with their limits, the alerts and the latest PSI."""
+    """One W&B run of job type "monitor": the two charts with their limits, the alerts and the latest PSI.
+
+    Inputs:  summary, the dictionary from measure (weekly tables, limits, alerts); cfg, the full config;
+             env, the loaded environment settings.
+    Outputs: None. Starts, fills and finishes one W&B run (the fallback chart is skipped when there are no answers).
+    Why:     the team watches drift and fallback over time in W&B, with the limit drawn on each chart.
+    """
     run = tracking.start_run(cfg, env, job_type="monitor")
     tracking.log_limit_chart(run, "monitor/drift_psi", summary["weekly_drift"]["max_psi"].rename("max PSI"),
                              summary["psi_limit"], "Input drift: largest PSI of the daily returns")
@@ -140,6 +166,7 @@ def main(argv: list[str] | None = None) -> dict:
 
     Inputs:  argv, the command-line arguments (None means none, so a test never reads sys.argv).
     Outputs: the JSON-ready summary that was saved.
+    Why:     one command checks both retrain triggers, so the weekly job and a person run the same thing.
     """
     args = _parse_args([] if argv is None else argv)
     cfg, env = config.load_config(), config.load_env()

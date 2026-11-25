@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from src import api, features, portfolio, train, utils
+from src import allocation, api, config, features, portfolio, train, utils
 
 CFG = api.CFG
 TICKERS = CFG["data"]["tickers"]
@@ -57,8 +57,10 @@ def fitted_model():
     rng = np.random.default_rng(1)
     X = pd.DataFrame(rng.normal(0.0, 0.05, size=(60, len(columns))), columns=columns)
     y = pd.Series([0.0, 0.5, 1.0] * 20)
-    return train.train_model(X, y, features.get_feature_preprocessor(columns), "classification",
-                             CFG["model"]["params"], CFG["model"]["random_state"])
+    model = train.train_model(X, y, features.get_feature_preprocessor(columns), "classification",
+                              CFG["model"]["params"], CFG["model"]["random_state"])
+    model.target_metadata_ = allocation.model_target(CFG)
+    return model
 
 
 @pytest.fixture
@@ -92,7 +94,7 @@ def test_integration_health_with_and_without_a_model(start_app, fitted_model):
 
 def test_unit_health_reports_version_and_commit(start_app, monkeypatch):
     monkeypatch.setenv("APP_VERSION", "v1.1.0")
-    monkeypatch.setenv("RENDER_GIT_COMMIT", "abc1234")
+    monkeypatch.setenv("APP_COMMIT", "abc1234")
     with start_app(None) as client:
         body = client.get("/health").json()
     assert body["version"] == "v1.1.0"
@@ -102,7 +104,7 @@ def test_unit_health_reports_version_and_commit(start_app, monkeypatch):
 
 def test_unit_health_defaults_version_dev_and_commit_local(start_app, monkeypatch):
     monkeypatch.delenv("APP_VERSION", raising=False)
-    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("APP_COMMIT", raising=False)
     monkeypatch.setattr(api.config, "PROJECT_ROOT", api.config.PROJECT_ROOT / "no-such-folder")
     with start_app(None) as client:
         body = client.get("/health").json()
@@ -244,11 +246,47 @@ def test_integration_bad_prices_are_400(start_app):
     assert response.status_code == 400
 
 
-def test_integration_calculated_target_without_train_years_is_400(start_app):
+@pytest.mark.parametrize("target_method", config.CALCULATED_TARGETS)
+def test_integration_band_rule_uses_stored_calculated_weights(start_app, target_method):
+    """A full band-triggered trade goes to the reviewed target weights."""
     with start_app(None) as client:
-        response = client.post("/predict", json=request_body(target_method="min_variance"))
-    assert response.status_code == 400
-    assert "train" in response.json()["detail"]
+        response = client.post("/predict", json=request_body(
+            target_method=target_method, rebalancing_method="tolerance_band", shifts={"SPY": 0.25, "IEF": -0.25},
+        ))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["recommendation"] == 1.0
+    assert {row["ticker"]: row["weight"] for row in body["proposed_portfolio"]} == pytest.approx(
+        CFG["target_weights"]["calculated"][target_method])
+    assert body["fallback"] is False
+
+
+@pytest.mark.parametrize("target_method", config.CALCULATED_TARGETS)
+@pytest.mark.parametrize("loaded", [True, False])
+def test_integration_calculated_smart_target_falls_back_with_reason(start_app, fitted_model, target_method, loaded):
+    """Calculated targets work with smart and bypass a model trained for the policy mix."""
+    with start_app(fitted_model if loaded else None) as client:
+        response = client.post("/predict", json=request_body(target_method=target_method))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["fallback"] is True
+    assert body["prediction"] is None
+    assert body["probability"] is None
+    assert "calendar-and-band" in body["reason"]
+    assert "tracking error" in body["reason"]
+    assert body["recommendation"] == body["rule_action"]
+
+
+def test_integration_policy_request_does_not_use_a_model_for_another_target(start_app, fitted_model, monkeypatch):
+    """A config fitted for a calculated mix cannot serve model decisions for the policy mix."""
+    monkeypatch.setitem(CFG["target_weights"], "method", "min_variance")
+    with start_app(fitted_model) as client:
+        response = client.post("/predict", json=request_body(target_method="policy"))
+    assert response.status_code == 200, response.text
+    assert response.json()["fallback"] is True
+    assert response.json()["prediction"] is None
+    assert api.NO_MODEL_REASON not in response.json()["reason"]
+    assert "requested policy weights" in response.json()["reason"]
 
 
 # ---------- logging ----------
@@ -392,3 +430,35 @@ def test_unit_failing_finish_run_is_logged(monitored, monkeypatch, caplog):
     with caplog.at_level(logging.ERROR, logger="src.api"), client:
         pass
     assert any("cannot close" in record.getMessage() for record in caplog.records)
+
+
+def test_unit_loading_rejects_model_metadata_after_policy_weights_change(tmp_path, fitted_model):
+    """An artifact cannot silently serve a different target after configuration changes."""
+    utils.save_model(fitted_model, tmp_path / "model.joblib")
+    cfg = {**CFG, "paths": {**CFG["paths"], "model": str(tmp_path / "model.joblib")},
+           "target_weights": {**CFG["target_weights"], "policy": dict(CFG["target_weights"]["policy"])}}
+    cfg["target_weights"]["policy"].update(SPY=0.35, IEF=0.35)
+    assert api.load_serving_model(cfg, {"MODEL_SOURCE": "local"}) == (None, "rule")
+
+
+def test_unit_loading_rejects_a_legacy_artifact_without_target_metadata(tmp_path, fitted_model):
+    """Unknown historical training targets require a new reviewed model."""
+    import copy
+
+    legacy = copy.deepcopy(fitted_model)
+    del legacy.target_metadata_
+    utils.save_model(legacy, tmp_path / "model.joblib")
+    cfg = {**CFG, "paths": {**CFG["paths"], "model": str(tmp_path / "model.joblib")}}
+    assert api.load_serving_model(cfg, {"MODEL_SOURCE": "local"}) == (None, "rule")
+
+
+def test_integration_calculated_target_keeps_rule_reason_and_fixed_training_risk(start_app):
+    """The rule explains its action and the target's risk estimate stays independent of request prices."""
+    reasons = []
+    with start_app(None) as client:
+        for seed in (3, 17):
+            answer = client.post("/predict", json=request_body(
+                target_method="min_variance", prices=price_records(seed=seed))).json()
+            assert "No trade:" in answer["reason"] or "Rebalance" in answer["reason"]
+            reasons.append(answer["reason"].split("a year.")[0])
+    assert reasons[0] == reasons[1]

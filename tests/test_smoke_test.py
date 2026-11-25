@@ -29,8 +29,10 @@ class Stub(BaseHTTPRequestHandler):
     """Answers /health and /predict with whatever the test put in `routes`: path -> (status, body)."""
 
     routes: dict = {}
+    agents: list = []
 
     def _answer(self) -> None:
+        Stub.agents.append(self.headers.get("User-Agent"))
         status, body = self.routes.get(self.path, (404, {"detail": "Not Found"}))
         text = body if isinstance(body, str) else json.dumps(body)
         self.send_response(status)
@@ -58,6 +60,7 @@ def stub():
 
     def serve(health=(200, HEALTHY), predict=(200, ANSWER)) -> str:
         Stub.routes = {"/health": health, "/predict": predict}
+        Stub.agents = []
         return f"http://127.0.0.1:{server.server_address[1]}"
 
     yield serve
@@ -83,6 +86,12 @@ def test_unit_healthy_service_exits_0(stub, caplog):
     with caplog.at_level(logging.INFO):
         assert run(stub()) == 0
     assert any(record.getMessage().startswith("PASS") for record in caplog.records)
+
+
+def test_unit_every_call_sends_the_smoke_test_user_agent(stub):
+    assert run(stub()) == 0
+    assert len(Stub.agents) >= 2   # the /health GET and the /predict POST
+    assert set(Stub.agents) == {"etf-smoke-test/1"}
 
 
 def test_unit_unhealthy_until_timeout_exits_1(stub, caplog):

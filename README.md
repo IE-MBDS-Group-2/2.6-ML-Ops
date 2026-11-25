@@ -80,7 +80,7 @@ Robustness checks:
 - A 12-month shadow period with no market drawdown is reported as "inconclusive", not "passed".
 - Optional input: a public market-stress indicator (VIX vs VIX3M, or recent volatility vs its normal level), used as a model input or to trigger the fallback. It also gives the drift monitor alert a concrete number.
 
-Rough cost (ALL ESTIMATES): course build by the 4 to 5 person team, part-time, about 6 weeks. At a firm: 1 ML engineer (half-time, 12 weeks) plus the quant analyst (a quarter of their time), then about a tenth of one person's time to run and monitor. Infrastructure: laptop CPU for training, GitHub Actions, W&B, Render free or lowest tier, under €50 per month.
+Rough cost (ALL ESTIMATES): course build by the 4 to 5 person team, part-time, about 6 weeks. At a firm: 1 ML engineer (half-time, 12 weeks) plus the quant analyst (a quarter of their time), then about a tenth of one person's time to run and monitor. Infrastructure: laptop CPU for training, GitHub Actions, W&B, a small self-hosted container, under €50 per month.
 
 | Risk | Mitigation |
 | --- | --- |
@@ -125,7 +125,7 @@ Added in Stage 3. The business case above is unchanged, as submitted. This part 
 | Quality gate, `max_drawdown_reduction >= 0.20` on validation 2020 to 2021 | `evaluate.check_gate`, run by `main.py` | Stage 2 classifier: -0.047 (-19.6% against -18.7%). **Not met.** Nothing is saved or shipped |
 | Reinforcement learning agent through the same gate, median of 5 seeds | `rl_agent.py`, run by `main.py` (#102) | Median of 5 seeds: +0.019 (seeds 0.019, 0.019, 0.019, 0.024, 0.019). **Not met.** The 60% fallback would hand the decision to today's rule on 22% of validation weeks |
 | Simple-rule challengers: current rule, bands of 2.5 and 1.5 points, persistent drift, asymmetric rule, matched-exposure mix; the best is selected on validation | `rules.py`, reported by `main.py` | Persistent drift selected: -18.40% max drawdown and 14.34% annual return against today's rule's -18.74% and 13.72%. The two bands and matched exposure fail the return guard |
-| Traditional benchmarks (mean-variance, maximum Sharpe, minimum variance, risk parity), reported and never gated | `benchmarks.py`, reported by `main.py` | Fitted on the train years. Minimum variance 99% BIL (max drawdown -0.1%), risk parity 85% BIL (-1.3%), maximum Sharpe over cash 23% SPY, 72% IEF, 5% GLD (-7.3%), mean-variance 50% SPY, 28% IEF, 22% GLD (-16.6%). Mean-variance changes the mix rather than timing it, so it is not comparable with the gate. The Sharpe ratios (1.17 to 1.42) have no risk-free rate subtracted, which flatters the cash-heavy portfolios |
+| Traditional benchmarks (mean-variance, maximum Sharpe, minimum variance, risk parity), reported and never gated | `benchmarks.py`, reported by `main.py` | Fitted on the train years with a 60% asset cap, covariance shrinkage and zero cash weight. Minimum variance: 25.3% SPY, 60.0% IEF, 14.7% GLD (max drawdown -8.3%); maximum Sharpe: 27.5% SPY, 60.0% IEF, 12.5% GLD (max drawdown -8.5%); mean-variance: 50.3% SPY, 27.8% IEF, 22.0% GLD (max drawdown -16.7%); risk parity: 14.8% SPY, 11.2% EFA, 59.1% IEF, 14.9% GLD (max drawdown -8.9%). These allocations change the policy mix, so they are reported separately from the gate. |
 | Guards: annual net return, annual trading cost, tracking error | `evaluate.guard_report`, reported by `main.py` | The tracking-error limit is 0.012, twice today's rule (0.0059). Classifier: return shortfall 0.0063 against a limit of 0.0025 (**failed**), cost ratio 1.12 against 2.0 (passed), tracking error 0.0025 against 0.012 (passed) |
 | Release decision on 2022 to 2025, run once | `evaluate.release_decision`, the test audit in `main.py` | **Not run:** no model passed the gate, so the test years stay sealed |
 | Robustness checks: Holm correction, cost sensitivity, the largest drawdown episode removed | `robustness.py`, reported by `main.py` | Feasibility ceiling: a perfect-hindsight agent on 2007 to 2021 reduces max drawdown by only 0.0044, so **the 0.20 gate cannot be reached with these three actions**. Cost sensitivity (classifier): -0.047 with flat costs, -0.047 with realistic costs. One version scored on validation with the shipped settings (six with the RL seeds). Holm correction and episode removal run only in the test audit, which stays sealed |
@@ -188,6 +188,32 @@ A new download gives slightly different prices and so a different checksum. Use 
 - **What it learns**: the action with the best reward for the coming window. Reward = the window's portfolio return, minus 0.1% of the value traded, minus a penalty for new drops below the previous high.
 - **Fallback**: if the model's probability for its preferred action is below 60%, or an input is missing, today's rule applies instead.
 
+### Calculated allocation targets
+
+The four calculated targets are fitted at every retrain on prices through `split.train_end`.
+Minimum variance, maximum Sharpe, mean-variance and risk parity share the benchmark optimizer,
+Ledoit-Wolf covariance shrinkage and a configurable cap of 60% per risky asset.
+The BIL cash ticker receives zero weight. Maximum Sharpe subtracts BIL returns as the risk-free rate.
+Changing the cap changes the investment mandate and requires review.
+
+The API and pipeline read the reviewed weights in `target_weights.calculated`.
+For a calculated target, `smart` serving falls back to calendar-and-band and explains the reason.
+The API reports the training-period tracking-error estimate stored with the fitted weights.
+The estimate stays fixed across requests until the next reviewed refit.
+Models evaluated with calculated targets are research candidates. Serving calculated targets uses the
+rule even if a model is present. The existing policy target keeps its normal smart behavior.
+During grid search, calculated targets are refitted inside each training window before its scoring
+block so later training prices cannot influence earlier allocation decisions.
+
+Run `python -m scripts.fit_targets` at every retrain and submit the updated configuration for review.
+The generated block records the snapshot checksum, return dates, training cut-off, optimizer settings
+and training-period tracking errors as machine-readable data. Config loading rejects stale split/settings
+metadata, and calculated-target training verifies the actual snapshot checksum before it starts.
+
+Every saved model includes its training target method and weights inside its joblib artifact and W&B
+metadata. The API uses a model only when those values match the configured target. Older artifacts
+without target metadata fall back to the rule until retrained.
+
 ### The gate and the honest result
 A model is only saved, registered and served if `max_drawdown_reduction >= 0.20` on validation (2020 to 2021). That is a worst loss at least 20% smaller than today's rule (quarterly rebalance plus a 5-point drift check).
 
@@ -198,6 +224,16 @@ A model is only saved, registered and served if `max_drawdown_reduction >= 0.20`
 | `max_drawdown_reduction` | **-0.047, gate NOT met** (needs 0.20 or more) |
 
 So the Stage 2 classifier is not saved, not registered and not shipped. Until a model passes, the live service answers with today's rule and says so in its reply. We report this result as it is and do not tune the model on the validation years until it passes. Stage 3 adds the reinforcement learning agent, simple-rule challengers and benchmark portfolios, and a release decision on 2022 to 2025 that runs once.
+
+### Why the label serves the gate
+The gate asks for one thing: on validation (2020 to 2021) the model's maximum drawdown must be at least 20% smaller than today's rule (`max_drawdown_reduction >= 0.20`). The label is chosen to push in that direction, and it is worth saying how far it can.
+
+- **The link.** Maximum drawdown is the deepest fall from a running peak. A week can only deepen it by ending below the previous high, that is, by making a new low. The reward charges exactly that: it subtracts `penalty_lambda` times the new drop below the previous high. So the label prefers the actions that avoid the steps that build the worst trough.
+- **The gap.** The label is picked one week at a time, while maximum drawdown belongs to the whole path. A week that makes no new low gives no drawdown signal at all, and the label there is decided by return and cost alone. The label is therefore a proxy for the gate's measure, not the measure itself.
+- **How the proxy was tested.** First, the perfect-hindsight ceiling: an agent that knows the future reduces maximum drawdown by only 0.0044 on 2007 to 2021, so no model that only chooses among the three rebalancing actions can reach 0.20. The limit is the action space, not the model. Second, the reinforcement learning agent, which optimises several weeks at once instead of one: median of 5 seeds +0.019 on validation, best seed +0.024. Third, the gate itself blocks every model, so today's rule serves (decision D8). That is the design working as intended, and we report it as it is.
+- **What would close the gap.** Actions that can change the mix itself (dynamic weights within a mandate band), and a gate chosen on the training years instead of fixed in advance. More than three actions is the first step under "A stronger agent" in [Future work](#future-work); the other two come after it.
+
+The metric (`max_drawdown_reduction`), the threshold (0.20) and the direction (at least, on validation) are the same here, in `TEAM_BRIEF.md` and in `config.yaml` (`quality_gate`).
 
 ### Walk-forward results per year
 Train years only, shipped settings; each year scored by a model trained on the years before it.
@@ -252,6 +288,18 @@ The pipeline never downloads data. Use the `prices.csv` that Ricardo shares with
 
 Run `python scripts/fetch_prices.py` only to make a new snapshot. Downloads differ over time, so a new file has a different checksum and gives different results.
 
+## Refit calculated allocation targets
+
+At each retrain, run `python -m scripts.fit_targets` against the frozen training snapshot.
+The command fits minimum variance, maximum Sharpe, mean-variance and risk parity with the
+same optimizer as the benchmark report. It uses prices through `split.train_end` only.
+Covariance shrinkage stabilizes the estimates, `benchmarks.max_weight` caps each asset,
+and the cash ticker has zero weight in the four risky allocations. Maximum Sharpe uses
+cash returns as its risk-free return.
+
+The command updates `target_weights.calculated` in `config.yaml` and records the source
+checksum, return dates and machine-readable fit provenance. Submit the changes through a reviewed PR when
+retraining so the API reads the same versioned weights.
 No access to the snapshot? Make sample data instead: `python -m scripts.make_sample_prices`. The prices are random, every run logs that they are SYNTHETIC, and CI uses them. The script refuses to overwrite a file that already exists unless you pass `--force`, so it cannot replace the real snapshot by accident. Results on sample data mean nothing.
 
 ## Run
@@ -296,7 +344,7 @@ Then open `http://127.0.0.1:8000/docs` for the interactive page, where you can t
 | `WANDB_MODE` | `online`, `offline` or `disabled` |
 | `WANDB_API_KEY` | your **own** key, only for `wandb` or `online` (team `ie-mbds-group-2`, ask Miguel for an invite) |
 | `WANDB_ENTITY`, `WANDB_MODEL_ALIAS`, `APP_VERSION` | the W&B team, the model alias (`prod`) and the release name shown by `/health` |
-| `RENDER_GIT_COMMIT` | the deployed commit, shown by `/health` as `commit`. The release image has it baked in (the name is kept from the first hosting plan); leave it as `local` on your machine |
+| `APP_COMMIT` | the deployed commit, shown by `/health` as `commit`. The release image has it baked in; leave it as `local` on your machine |
 
 **No model yet?** No model has passed the gate, so none is saved. The service still starts and answers with today's rule, with `fallback: true` and the reason in plain words.
 

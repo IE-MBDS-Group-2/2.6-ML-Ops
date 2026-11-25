@@ -58,7 +58,12 @@ def population_stability_index(reference: pd.Series, current: pd.Series, bins: i
 
 
 def _bin_shares(values: pd.Series, edges: np.ndarray) -> np.ndarray:
-    """Share of values in each bin (a value on an edge goes to the upper bin), empty bins raised to SHARE_FLOOR."""
+    """Share of values in each bin (a value on an edge goes to the upper bin), empty bins raised to SHARE_FLOOR.
+
+    Inputs: values, the numbers to count; edges, the bin edges (from the reference).
+    Outputs: Array with the share of values in each bin, at least SHARE_FLOOR.
+    Why: PSI takes a log of a ratio of shares, so a share of zero must never occur.
+    """
     counts, _ = np.histogram(values, bins=edges)
     return np.maximum(counts / counts.sum(), SHARE_FLOOR)
 
@@ -68,6 +73,7 @@ def feature_drift(reference: pd.DataFrame, current: pd.DataFrame, columns: list[
 
     Inputs:  reference and current, date x column tables; columns, the ones to compare; bins, as above.
     Outputs: Series named "psi", indexed by column, sorted from the largest drift down.
+    Why:     the per-feature numbers show which input moved; weekly_drift keeps only the largest.
     Raises:  KeyError naming any column missing from either table.
     """
     missing = [column for column in columns if column not in reference or column not in current]
@@ -128,11 +134,22 @@ def weekly_fallback_rate(answers: pd.DataFrame, date_column: str, fallback_colum
 
 
 def drift_alert(drift: pd.DataFrame, limit: float) -> bool:
-    """True when the latest week's drift measure is above the limit."""
+    """True when the latest week's drift measure is above the limit.
+
+    Inputs: drift, the weekly_drift table; limit, monitoring.psi_limit.
+    Outputs: True if the latest week's max_psi is above the limit; False when the table is empty.
+    Why: One yes / no for the drift retrain trigger.
+    """
     return bool(not drift.empty and drift["max_psi"].iloc[-1] > limit)
 
 
 def fallback_alert(rates: pd.DataFrame, limit: float, weeks: int) -> bool:
-    """True when the fallback rate is above the limit in each of the last `weeks` weeks."""
+    """True when the fallback rate is above the limit in each of the last `weeks` weeks.
+
+    Inputs: rates, the weekly_fallback_rate table; limit, the fallback rate that counts as too high; weeks, how many
+        weeks in a row it must stay above the limit.
+    Outputs: True if the last `weeks` weeks all exceed the limit; False if there are fewer than `weeks` weeks.
+    Why: One yes / no for the fallback retrain trigger, which needs a sustained problem, not one bad week.
+    """
     latest = rates["fallback_rate"].tail(weeks)
     return bool(len(latest) == weeks and (latest > limit).all())

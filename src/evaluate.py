@@ -65,7 +65,12 @@ def evaluate_model(model: Pipeline, X_eval: pd.DataFrame, y_eval: pd.Series, pro
 
 
 def _regression_metrics(model: Pipeline, X_eval: pd.DataFrame, y_eval: pd.Series) -> dict[str, float]:
-    """Fixed regression metrics: rmse, mae and r2, as plain floats."""
+    """Fixed regression metrics: rmse, mae and r2, as plain floats.
+
+    Inputs: model, a fitted pipeline; X_eval and y_eval, the held-out features and targets.
+    Outputs: {"rmse", "mae", "r2"} as floats.
+    Why: The regression counterpart of the classification scores, kept out of evaluate_model to keep it short.
+    """
     y_pred = model.predict(X_eval)
     result = {
         "rmse": float(np.sqrt(mean_squared_error(y_eval, y_pred))),
@@ -196,6 +201,10 @@ def _guard(value: float, limit: float) -> dict:
 
     A value that is not finite (a cost ratio against a baseline that trades nothing) fails and is reported as
     None, so metrics.json stays strict JSON (json.dumps would write Infinity, which strict readers reject).
+
+    Inputs: value, the measured number; limit, the largest value that still passes.
+    Outputs: {"value", "limit", "passed"}; value is None when it is not finite.
+    Why: All three guards report in one shape, which release_decision reads.
     """
     if not np.isfinite(value):
         return {"value": None, "limit": float(limit), "passed": False}
@@ -203,7 +212,12 @@ def _guard(value: float, limit: float) -> dict:
 
 
 def _cost_ratio(agent_cost: float, baseline_cost: float) -> float:
-    """Agent's annual trading cost as a multiple of the baseline's; a baseline that trades nothing allows only 0."""
+    """Agent's annual trading cost as a multiple of the baseline's; a baseline that trades nothing allows only 0.
+
+    Inputs: agent_cost and baseline_cost, annual trading cost of each portfolio (fraction of portfolio value).
+    Outputs: agent_cost / baseline_cost; 0.0 if both are zero, infinity if only the baseline is zero.
+    Why: The cost guard limits how much more the agent may trade than today's rule, and a ratio needs a baseline.
+    """
     if baseline_cost == 0:
         return 0.0 if agent_cost == 0 else float("inf")
     return agent_cost / baseline_cost

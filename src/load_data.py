@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src import utils
+from src import clean_data, utils, validate
 
 logger = logging.getLogger(__name__)
 
@@ -56,3 +56,22 @@ def load_raw_data(raw_data_path: Path) -> pd.DataFrame:
 
     logger.info("Raw data ready: %d rows, %d columns", len(df), len(df.columns))
     return df
+
+
+def load_prices(path: Path, cfg: dict) -> pd.DataFrame:
+    """Read one long price file, clean it, and stop here if the data is not trustworthy.
+
+    Inputs:  path, a long file (date, ticker, close, volume); cfg, the full config (reads data).
+    Outputs: the clean long table.
+    Why:     training and inference data go through the same three steps, so they cannot differ.
+    Raises:  FileNotFoundError, ValueError (from load_data and validate).
+    """
+    cols = cfg["data"]["columns"]
+    clean = clean_data.clean_dataframe(
+        load_raw_data(path), date_column=cols["date_column"],
+        sort_by=[cols["date_column"], cols["ticker_column"]])
+    validate.validate_dataframe(
+        clean, cfg["data"]["required_columns"], tickers=cfg["data"]["tickers"],
+        max_abs_daily_return=cfg["data"]["max_abs_daily_return"], price_columns=cols,
+    )
+    return clean

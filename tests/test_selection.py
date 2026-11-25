@@ -220,3 +220,35 @@ def test_unit_frequency_comparison_one_row_per_review_on_train_years(monkeypatch
     assert result["model_median_annual_return"].tolist() == pytest.approx([0.06] * 3)
     assert result["rule_median_annual_trading_cost"].tolist() == pytest.approx([0.0] * 3)
     assert cfg["rebalancing"]["review"] == "weekly"          # the caller's config is not changed
+
+
+def test_integration_calculated_window_labels_ignore_future_prices() -> None:
+    """Real target fitting, labeling and eligible rows use only prices through each training cutoff."""
+    from scripts.make_sample_prices import make_sample_prices
+    from src import config, load_data, main
+
+    cfg = config.load_config()
+    cfg["target_weights"]["method"] = "min_variance"
+    cfg["split"]["train_end"] = "2008-12-31"
+    data = cfg["data"]
+    raw = make_sample_prices(data["tickers"], data["start"], cfg["split"]["train_end"], 12, data["columns"])
+    clean = load_data.clean_data.clean_dataframe(raw, date_column=data["columns"]["date_column"])
+    market = main._market_inputs(clean, cfg)
+    dates = market[0].loc[:"2007-12-31"].index
+    score = market[0].loc["2008-01-01":].index
+    initial, settings = selection._window_target(pd.DataFrame(), market, cfg, dates)
+    poisoned = tuple(frame.copy() for frame in market)
+    for frame in poisoned:
+        frame.loc["2008":] *= 100
+    changed, changed_settings = selection._window_target(pd.DataFrame(), poisoned, cfg, dates)
+    pd.testing.assert_frame_equal(initial, changed)
+    assert not initial.dropna(subset=[cfg["problem"]["target_column"]]).empty
+    assert initial.index.max() <= dates[-1]
+    assert settings["target_weights"] == changed_settings["target_weights"]
+    eligible, _, _, _ = selection._prepare_window(pd.DataFrame(), market, cfg, (dates, score))
+    altered, _, _, _ = selection._prepare_window(pd.DataFrame(), poisoned, cfg, (dates, score))
+    pd.testing.assert_frame_equal(eligible, altered)
+    cfg["selection"]["first_train_end"] = "2007-12-31"
+    prepared = selection._prepared_windows(pd.DataFrame(), market, cfg)
+    assert len(prepared) == 1
+    assert not prepared[0][0].empty

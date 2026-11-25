@@ -36,6 +36,7 @@ ACTIONS = (0.0, 0.5, 1.0)
 HTTP_OK = 200
 MAX_CALL_SECONDS = 60      # one HTTP call never waits longer than this, whatever the overall timeout
 SHORT_SHA = 7              # the shortest commit SHA accepted as a match
+USER_AGENT = "etf-smoke-test/1"   # Cloudflare can refuse urllib's default agent (HTTP 403, error 1010)
 
 
 def call(url: str, timeout: float, body: dict | None = None) -> tuple[int, dict | None, str]:
@@ -46,7 +47,8 @@ def call(url: str, timeout: float, body: dict | None = None) -> tuple[int, dict 
     Why:     every failure becomes data the caller can report in one line, never an exception.
     """
     data = None if body is None else json.dumps(body).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
+    request = urllib.request.Request(url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             status, text = response.status, response.read().decode("utf-8")
@@ -76,6 +78,7 @@ def health_problem(status: int, body: dict | None, note: str, expect: dict) -> s
 
     Inputs:  status, body and note from call; expect, {"version": str | None, "commit": str | None}.
     Outputs: a short reason, or "".
+    Why:     a deploy takes time to start answering, so the check needs a reason it can log while it waits.
     """
     if status != HTTP_OK or body is None:
         return note or f"HTTP {status}"
@@ -94,6 +97,7 @@ def wait_for_health(base_url: str, expect: dict, timeout: float, interval: float
     Inputs:  base_url; expect, {"version": ..., "commit": ...} (None skips that check); timeout and interval,
              in seconds.
     Outputs: "" once healthy, otherwise one line saying health never became ok and the last reason.
+    Why:     a new deploy needs a moment to start, so the check waits instead of failing on the first refusal.
     """
     deadline = time.monotonic() + timeout
     while True:
@@ -113,6 +117,7 @@ def predict_problem(base_url: str, request_body: dict, timeout: float) -> str:
 
     Inputs:  base_url; request_body, the sample request; timeout, seconds for the call.
     Outputs: a one-line reason, or "".
+    Why:     a service can be healthy and still unable to answer a real request, so one real call proves it works.
     """
     status, body, note = call(f"{base_url}/predict", timeout, request_body)
     if status != HTTP_OK or body is None:
@@ -147,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Inputs:  argv, the command-line arguments (None reads sys.argv).
     Outputs: 0 or 1; one log line says the result.
+    Why:     the deploy workflow reads the exit code to decide whether the release is good.
     """
     args = parse_args(argv)
     base_url = args.url.rstrip("/")

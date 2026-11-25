@@ -6,8 +6,8 @@
 max-line-length=120
 
 [BASIC]
-# Course-contract argument names (X_train, X_eval, X_infer, ...) are fixed by the course.
-good-names=X,X_rest,X_train,X_val,X_test,X_eval,X_infer
+# Course-contract argument names (X_train, X_eval, X_infer, ...) are fixed by the course; C is scikit-learn's own name.
+good-names=C,X,X_rest,X_train,X_val,X_test,X_eval,X_infer
 
 [DESIGN]
 # The course contract fixes 6 arguments for split_data and train_model.

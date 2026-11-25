@@ -198,3 +198,37 @@ def test_unit_validate_reports_a_missing_price_column_before_any_row_message():
     table.loc[0, "close"] = None
     with pytest.raises(ValueError, match=r"Price columns \['ticker'\] are missing"):
         validate.validate_dataframe(table, required_columns=["close"], price_columns=COLUMNS)
+
+
+def test_unit_validate_raises_when_the_date_column_is_not_a_date():
+    """Dates left as text are rejected, naming the column and the type found."""
+    df = make_valid_long()
+    df["date"] = df["date"].dt.strftime("%Y-%m-%d")
+    with pytest.raises(ValueError, match=r"Column 'date' must hold dates.*object|Column 'date' must hold dates.*str"):
+        run_gate(df)
+
+
+def test_unit_validate_raises_when_the_ticker_column_is_not_text():
+    """A numeric ticker column is rejected."""
+    df = make_valid_long()
+    df["ticker"] = [1, 1, 1, 2, 2, 2]
+    with pytest.raises(ValueError, match=r"Column 'ticker' must hold text.*int64"):
+        run_gate(df)
+
+
+@pytest.mark.parametrize("column", ["close", "volume"])
+def test_unit_validate_raises_when_a_price_or_volume_is_text(column):
+    """One stray word turns a whole column into text; it is named with its type."""
+    df = make_valid_long()
+    df[column] = df[column].astype(object)
+    df.loc[1, column] = "abc"
+    with pytest.raises(ValueError, match=rf"Column '{column}' must hold numbers.*object"):
+        run_gate(df)
+
+
+def test_unit_validate_raises_when_close_is_boolean():
+    """True and False are numbers to numpy but not prices."""
+    df = make_valid_long()
+    df["close"] = [True] * 6
+    with pytest.raises(ValueError, match="Column 'close' must hold numbers.*bool"):
+        run_gate(df)

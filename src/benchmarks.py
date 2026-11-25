@@ -3,8 +3,8 @@ benchmarks.py  [The traditional portfolios, reported next to the model]
 ======================================================================
 Purpose   Fit the classic long-only allocations (minimum variance, maximum Sharpe, mean-variance, risk parity)
           on the TRAIN years only, and run each one through the same simulator and costs as the model
-Method    scipy SLSQP on scaled moments; risk parity uses a log barrier. Maximum Sharpe is fitted on returns in
-          excess of the cash ticker (benchmarks.cash_ticker), and cash gets a zero weight
+Method    scipy SLSQP on shrunk covariance with per-asset caps. Risk parity uses a log barrier. The cash
+          ticker is excluded from risky allocations and supplies the risk-free return for maximum Sharpe
 Input     Simulator market frames, the config (benchmarks, split, portfolio, data) and evaluation dates
 Output    One row per method: weights, max drawdown, return, volatility, Sharpe and trading cost; saved to
           reports/benchmarks.csv, added to metrics.json and logged to W&B. Reported, never gated
@@ -24,8 +24,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy import optimize
+from sklearn.covariance import LedoitWolf
 
-from src import evaluate, portfolio, tracking, utils
+from src import config, evaluate, portfolio, tracking, utils
 
 logger = logging.getLogger(__name__)
 METHODS = ("min_variance", "max_sharpe", "mean_variance", "risk_parity")
@@ -75,22 +76,27 @@ def _solve_weights(train_returns: pd.DataFrame, method: str, params: dict) -> pd
         raise ValueError("Benchmark training returns must be finite. Check the source prices.")
     size = train_returns.shape[1]
     initial = np.full(size, 1.0 / size)
-    covariance = train_returns.cov().to_numpy()
+    cap = config.asset_cap(params.get("max_weight", 1.0), size)
+    if cap == 1.0 / size:
+        return pd.Series(initial, index=train_returns.columns, dtype=float)
+    covariance = LedoitWolf().fit(train_returns).covariance_
     mean = train_returns.mean().to_numpy()
     scale = max(float(covariance.diagonal().max()), _NUMERIC_FLOOR)
     covariance = covariance / scale
     mean = mean / (np.sqrt(scale) if method == "max_sharpe" else scale)
     if method == "risk_parity":
-        # The log barrier imposes equal risk budgets. Normalize to a fully invested portfolio.
+        # Constrain the normalized weights in the unnormalized log-barrier problem:
+        # x[i] / sum(x) <= cap is equivalent to the linear inequality below.
         stable_covariance = covariance + _NUMERIC_FLOOR * np.eye(size)
         result = optimize.minimize(
             _risk_budget, initial, args=(stable_covariance,), method="SLSQP",
             bounds=[(_NUMERIC_FLOOR, None)] * size,
+            constraints=optimize.LinearConstraint(np.eye(size) - cap, -np.inf, 0.0),
         )
     else:
         result = optimize.minimize(
             _objective(method, mean, covariance, params), initial, method="SLSQP",
-            bounds=[(0.0, 1.0)] * size,
+            bounds=[(0.0, cap)] * size,
             constraints={"type": "eq", "fun": lambda weights: weights.sum() - 1.0},
         )
     if not result.success:
@@ -103,21 +109,36 @@ def fit_weights(train_returns: pd.DataFrame, method: str, params: dict) -> pd.Se
     """Fit a long-only allocation using pre-cutoff daily returns.
 
     Inputs: Finite training returns in ticker order, benchmark name and the benchmarks settings. If the
-        settings name a cash_ticker, maximum Sharpe is fitted on the other columns' returns in excess of it.
-    Outputs: Weights in input column order, summing to one; the cash ticker gets 0.0 for maximum Sharpe.
+        settings name a cash_ticker, it is excluded, and maximum Sharpe uses returns in excess of it.
+    Outputs: Weights in input column order, summing to one, with a zero weight for the cash ticker.
     Why: The report and the allocation target both call this, so they cannot disagree. Estimates stay within
         the training period.
     Raises: ValueError if cash_ticker is not a column, plus the errors of the optimizer.
     """
     cash = params.get("cash_ticker")
-    if method != "max_sharpe" or cash is None:
+    if cash is None:
         return _solve_weights(train_returns, method, params)
     if cash not in train_returns.columns:
         raise ValueError(f"benchmarks.cash_ticker {cash!r} is not one of the return columns "
                          f"({', '.join(map(str, train_returns.columns))}). Fix config.yaml or set it to null.")
-    excess_returns = train_returns.drop(columns=cash).sub(train_returns[cash], axis="index")
-    weights = _solve_weights(excess_returns, method, params)
+    risky_returns = train_returns.drop(columns=cash)
+    if method == "max_sharpe":
+        risky_returns = risky_returns.sub(train_returns[cash], axis="index")
+    weights = _solve_weights(risky_returns, method, params)
     return weights.reindex(train_returns.columns, fill_value=0.0)
+
+
+def training_returns(close_wide: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    """Compute daily returns using only prices in the pipeline's configured training window.
+
+    Inputs: close_wide, the date x ticker close table; cfg, reading portfolio.first_decision_date, split.train_end
+        and data.tickers.
+    Outputs: Daily percentage returns for the configured tickers from the day after first_decision_date up to
+        the training cutoff.
+    Why: Benchmark weights are estimated on training years only, so no later price reaches them.
+    """
+    start, cutoff = cfg["portfolio"]["first_decision_date"], cfg["split"]["train_end"]
+    return close_wide.loc[start:cutoff, cfg["data"]["tickers"]].pct_change(fill_method=None).iloc[1:]
 
 
 def run_benchmarks(market_data: tuple, cfg: dict, start: str, end: str) -> pd.DataFrame:
@@ -128,9 +149,7 @@ def run_benchmarks(market_data: tuple, cfg: dict, start: str, end: str) -> pd.Da
     Why: Assess the traditional allocations under the same rebalancing rule and trading costs.
     """
     close_wide = market_data[0]
-    training_prices = close_wide.loc[cfg["portfolio"]["first_decision_date"]:cfg["split"]["train_end"],
-                                     cfg["data"]["tickers"]]
-    train_returns = training_prices.pct_change(fill_method=None).iloc[1:]
+    train_returns = training_returns(close_wide, cfg)
     settings = cfg["benchmarks"]
     bounded_market = tuple(frame.loc[:end] for frame in market_data)
     decisions = portfolio.decision_dates(bounded_market[0].index, start, end, portfolio.review_frequency(cfg))

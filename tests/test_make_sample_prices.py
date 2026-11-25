@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from scripts import make_sample_prices as sample
-from src import config, validate
+from src import clean_data, config, validate
 
 TICKERS = ["SPY", "EFA", "IEF", "GLD", "BIL"]
 COLUMNS = {
@@ -66,7 +66,9 @@ def test_unit_columns_come_from_config():
 def test_integration_output_passes_validate():
     """The synthetic table passes validate_dataframe with the rules from config.yaml."""
     data = config.load_config()["data"]
-    frame = sample.make_sample_prices(data["tickers"], data["start"], data["end"], 42, data["columns"])
+    frame = clean_data.clean_dataframe(  # as the pipeline does: the date column becomes real dates
+        sample.make_sample_prices(data["tickers"], data["start"], data["end"], 42, data["columns"]),
+        date_column=data["columns"]["date_column"])
 
     assert validate.validate_dataframe(
         frame,

@@ -25,6 +25,31 @@ jobs:
           version="$(grep -A1 '^- name: flake8$' conda-lock.yml | sed -n 's/^  version: //p')"
           pipx run "flake8==${version}" --isolated --max-line-length=120 --extend-ignore=E203 src tests scripts
 
+      # Imports sorted (isort's defaults, the same version as the lock file).
+      - name: isort (before the environment)
+        run: |
+          version="$(grep -A1 '^- name: isort$' conda-lock.yml | sed -n 's/^  version: //p')"
+          pipx run "isort==${version}" --check-only src tests scripts
+
+      # No new secret in any tracked file. .secrets.baseline lists the known harmless findings (test fixtures);
+      # conda-lock.yml and the baseline itself are excluded (their checksums and hashes look like secrets). Compared by file and secret hash,
+      # so moving a known line does not fail the check; any new finding does.
+      - name: detect-secrets (before the environment)
+        run: |
+          version="$(grep -A1 '^- name: detect-secrets$' conda-lock.yml | sed -n 's/^  version: //p')"
+          pipx run "detect-secrets==${version}" scan --exclude-files '(conda-lock\.yml|\.secrets\.baseline)$' > "$RUNNER_TEMP/secrets.json"
+          python3 - "$RUNNER_TEMP/secrets.json" <<'PY'
+          import json, sys
+          def found(path):
+              results = json.load(open(path))["results"]
+              return {(name, item["hashed_secret"]) for name, items in results.items() for item in items}
+          new = sorted(found(sys.argv[1]) - found(".secrets.baseline"))
+          for name, _ in new:
+              print(f"::error file={name}::detect-secrets: possible secret in {name}. Remove it, or if it is a "
+                    "harmless fixture, regenerate .secrets.baseline and say so in the PR.")
+          sys.exit(1 if new else 0)
+          PY
+
       # The exact package versions the Docker image ships, not a fresh solve of environment.yml.
       - name: environment from conda-lock.yml
         uses: mamba-org/setup-micromamba@v2
@@ -54,6 +79,11 @@ jobs:
 
       - name: pytest with branch coverage
         run: pytest --cov=src --cov-branch --cov-report=term-missing --cov-fail-under=90
+
+      # House rule: pylint 10.00, i.e. no message at all (any message makes pylint exit non-zero). Needs the
+      # environment, so imports are checked against the real packages. Settings: .pylintrc.
+      - name: pylint (no messages)
+        run: pylint src scripts
 
       - name: radon (no function above complexity 10)
         run: |
