@@ -136,7 +136,7 @@ def test_unit_explain_three_known_states():
 def test_unit_calculated_target_falls_back_to_the_rule():
     returns = make_prices(periods=250)[0].pct_change().dropna()
     target = allocation.resolve_target("min_variance", make_cfg(), returns)
-    fit = allocation.target_fit(target, make_cfg(), returns)
+    fit = allocation.target_explanation(target, make_cfg(), returns)
     assert fit["fallback"] is True
     assert fit["reason"]
     assert fit["expected_tracking_error"] >= 0.0
@@ -202,14 +202,14 @@ def alternating_returns(days: int = 100) -> pd.DataFrame:
     return returns
 
 
-def test_unit_target_fit_policy_target_has_no_fallback():
-    fit = allocation.target_fit(TARGET, make_cfg(), None)
+def test_unit_target_explanation_policy_target_has_no_fallback():
+    fit = allocation.target_explanation(TARGET, make_cfg(), None)
     assert fit == {"fallback": False, "reason": "", "expected_tracking_error": 0.0}
 
 
-def test_unit_target_fit_other_target_falls_back_with_known_tracking_error():
+def test_unit_target_explanation_other_target_falls_back_with_known_tracking_error():
     other = TARGET + pd.Series({"SPY": 0.10, "IEF": -0.10}).reindex(TICKERS, fill_value=0.0)
-    fit = allocation.target_fit(other, make_cfg(), alternating_returns(100))
+    fit = allocation.target_explanation(other, make_cfg(), alternating_returns(100))
     # Only SPY varies: variance 0.0001 x 100 / 99; the weight difference on SPY is 0.10; 252 trading days.
     expected = 0.10 * np.sqrt(0.0001 * 100 / 99 * 252)
     assert fit["fallback"] is True
@@ -217,14 +217,14 @@ def test_unit_target_fit_other_target_falls_back_with_known_tracking_error():
     assert fit["expected_tracking_error"] == pytest.approx(expected, abs=1e-12)
 
 
-def test_unit_target_fit_raises_on_bad_inputs():
+def test_unit_target_explanation_raises_on_bad_inputs():
     other = TARGET + pd.Series({"SPY": 0.10, "IEF": -0.10}).reindex(TICKERS, fill_value=0.0)
     with pytest.raises(ValueError, match="train_returns"):
-        allocation.target_fit(other, make_cfg(), None)
+        allocation.target_explanation(other, make_cfg(), None)
     with pytest.raises(ValueError, match="GLD"):
-        allocation.target_fit(other, make_cfg(), alternating_returns().drop(columns="GLD"))
+        allocation.target_explanation(other, make_cfg(), alternating_returns().drop(columns="GLD"))
     with pytest.raises(ValueError, match="QQQ"):
-        allocation.target_fit(other.rename({"BIL": "QQQ"}), make_cfg(), alternating_returns())
+        allocation.target_explanation(other.rename({"BIL": "QQQ"}), make_cfg(), alternating_returns())
 
 
 def test_unit_explain_raises_on_an_unknown_action():

@@ -1,0 +1,42 @@
+# release-guard.yml  [A full release must come from main]
+# -------------------------------------------------------------------
+# Purpose   Stop a release tag that is not on main from reaching the live service
+# Trigger   workflow_call, from deploy.yml, with the release tag as input
+# Check     git merge-base --is-ancestor <tag commit> origin/main  (full history, so the answer is exact)
+# Why       the service is built from the tag, so a tag cut from a feature branch or from dev would put
+#           unreviewed code live. Pre-releases (dry runs from dev) skip this check in deploy.yml.
+
+name: release-guard
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag to check
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  on-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The tagged commit must be reachable from main
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          sha=$(git rev-parse "refs/tags/$TAG^{commit}")
+          if git merge-base --is-ancestor "$sha" origin/main; then
+            echo "$TAG ($sha) is on main."
+          else
+            echo "::error::$TAG ($sha) is not on main. Merge it into main first, then publish the release from there."
+            exit 1
+          fi

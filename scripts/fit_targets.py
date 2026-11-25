@@ -120,7 +120,7 @@ def fit_targets(config_path: Path, prices_path: Path) -> dict:
         "settings": config.fit_settings(cfg),
         "policy_weights": cfg["target_weights"]["policy"],
         "tracking_error": {
-            method: allocation.target_fit(pd.Series(target), cfg, returns)["expected_tracking_error"]
+            method: allocation.target_explanation(pd.Series(target), cfg, returns)["expected_tracking_error"]
             for method, target in weights.items()
         },
     }

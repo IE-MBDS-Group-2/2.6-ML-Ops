@@ -11,7 +11,7 @@ Run       uvicorn src.api:app   (then open /docs)
 Calls     trades, clean_data, validate, features, portfolio.live_state, allocation, infer, tracking, utils
 
 Why it matters
-- No new ML logic: every step is a call to the module the training pipeline uses, so a live answer and the
+- No new ML logic: every step is a call to the module the offline pipeline uses, so a live answer and the
   backtest cannot drift apart
 - No model past the gate (D8, D12): the service still starts and answers with today's rule (fallback true)
 - Monitoring: answers go to W&B in batches (api.monitoring_batch_size) under a serve run; a tracking error is
@@ -33,7 +33,8 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field, create_model, model_validator
+from pydantic import (BaseModel, ConfigDict, Field, create_model,
+                      model_validator)
 from sklearn.pipeline import Pipeline
 
 from src import allocation, clean_data, config, features, infer
@@ -68,6 +69,7 @@ RebalancingMethod = _choices("RebalancingMethod", config.ALLOWED_VALUES[allocati
 _COLUMNS = CFG["data"]["columns"]
 PriceRecord = create_model(
     "PriceRecord",
+    __config__=ConfigDict(extra="forbid"),
     **{
         _COLUMNS["date_column"]: (date, ...),
         _COLUMNS["ticker_column"]: (Ticker, ...),
@@ -80,12 +82,16 @@ PriceRecord = create_model(
 class Position(BaseModel):
     """One holding: an ETF from config.yaml and its market value (0 or more)."""
 
+    model_config = ConfigDict(extra="forbid")
+
     ticker: Ticker
     market_value: float = Field(ge=0)
 
 
 class PredictRequest(BaseModel):
     """The D9 request: one portfolio's positions and recent prices, plus the user's two optional choices."""
+
+    model_config = ConfigDict(extra="forbid")
 
     as_of: date
     positions: list[Position] = Field(min_length=1)
@@ -327,11 +333,11 @@ def _check_history(close_wide: pd.DataFrame, as_of: date, min_days: int) -> None
 
 
 def market_inputs(body: PredictRequest, cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """The request's prices through the training pipeline's own steps: clean, validate, wide, features.
+    """The request's prices through the offline pipeline's own steps: clean, validate, wide, features.
 
     Inputs:  body, the request; cfg, the full config (data, features, api).
     Outputs: (close_wide, volume_wide, market_features), ending on as_of.
-    Why:     live prices get exactly the checks and features the training data got, so the two cannot differ.
+    Why:     live prices get exactly the checks and features the offline data got, so the two cannot differ.
     Raises:  ValueError from validate, to_wide, features or the history check.
     """
     cols, tickers = cfg["data"]["columns"], cfg["data"]["tickers"]
@@ -398,15 +404,15 @@ def _target_decision(method: str, model: Pipeline | None, state: pd.DataFrame, c
              close, prices (date x ticker); target, the weights to return to; target_method, the requested
              target_weights.method; cfg, the full config.
     Outputs: the decision dictionary: the model's answer for smart on the policy mix, else a rule's answer.
-    Why:     the model is trained only for the approved policy mix, so any other target or an unmatched model
+    Why:     the model is built only for the approved policy mix, so any other target or an unmatched model
              falls back to calendar-and-band with the reason said in words.
     """
     if method != SMART:
         return _rule_decision(method, state, close, target, cfg)
     if target_method != "policy":
         decision = _rule_decision("calendar_and_band", state, close, target, cfg)
-        fit = allocation.target_fit(target, cfg, None)
-        fallback_reason = fit["reason"] or "Calculated targets use calendar-and-band for smart serving."
+        explanation = allocation.target_explanation(target, cfg, None)
+        fallback_reason = explanation["reason"] or "Calculated targets use calendar-and-band for smart serving."
         decision.update(fallback=True, reason=f"{fallback_reason} {decision['reason']}")
         return decision
     if model is None:

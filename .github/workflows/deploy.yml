@@ -3,7 +3,8 @@
 # Purpose   Build the release image once, publish it to GHCR, and prove the live service runs it
 # Trigger   A GitHub Release (or pre-release) is published: CI, build, push, smoke test
 #           A manual run from a release tag: rollback, re-points :release to that tag's existing image (no rebuild)
-# Flow      check the ref -> CI on that commit (ci.yml) -> build with the commit and version baked in
+# Flow      check the ref -> release guard (a full release must be on main) -> CI on that commit (ci.yml)
+#           -> build with the commit and version baked in
 #           -> push ghcr.io/<org>/etf-rebalancing-api:<sha>, :<tag> and :release -> the host (pull model) picks up :release
 #           -> smoke test the live URL until /health reports that commit
 # Variables SERVICE_URL (repository variable): the public address of the service. No secrets: GITHUB_TOKEN pushes
@@ -54,9 +55,17 @@ jobs:
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "$mode of $GITHUB_REF_NAME (commit $GITHUB_SHA) to $image"
 
-  ci:
+  # A full release must be on main; a pre-release (a dry run from dev) is not checked.
+  guard:
     needs: check-ref
-    if: needs.check-ref.outputs.mode == 'release'
+    if: needs.check-ref.outputs.mode == 'release' && !github.event.release.prerelease
+    uses: ./.github/workflows/release-guard.yml
+    with:
+      tag: ${{ github.ref_name }}
+
+  ci:
+    needs: [check-ref, guard]
+    if: always() && needs.check-ref.outputs.mode == 'release' && needs.guard.result != 'failure' && needs.guard.result != 'cancelled'
     uses: ./.github/workflows/ci.yml
 
   publish:

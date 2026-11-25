@@ -115,7 +115,7 @@ def _check_fit_inputs(target: pd.Series, tickers: list[str], train_returns: pd.D
         raise ValueError(f"The target covers {sorted(target.index)} but data.tickers is {sorted(tickers)}. "
                          "Give one weight for every configured ticker, and no others.")
     if train_returns is None:
-        raise ValueError("target_fit needs train_returns (daily returns of the train years) to estimate the "
+        raise ValueError("target_explanation needs train_returns (daily returns of the train years) to estimate the "
                          "tracking error of a target that is not the policy mix.")
     missing = [ticker for ticker in tickers if ticker not in train_returns.columns]
     if missing:
@@ -165,7 +165,7 @@ def model_target_matches(model: object, cfg: dict) -> bool:
     return getattr(model, "target_metadata_", None) == model_target(cfg)
 
 
-def target_fit(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None) -> dict:
+def target_explanation(target: pd.Series, cfg: dict, train_returns: pd.DataFrame | None) -> dict:
     """Say whether the model can serve this target, and how far the target is from the approved policy mix.
 
     Inputs:  target, the weights in use (from resolve_target); cfg, the full config (reads data.tickers and

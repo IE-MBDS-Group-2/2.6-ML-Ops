@@ -2,7 +2,9 @@
 
 Never the real data/ folder, never the network: the model is built in a fixture and handed to the app.
 """
+import json
 import logging
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -12,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from src import allocation, api, config, features, portfolio, train, utils
 
+ROOT = Path(__file__).resolve().parents[1]
 CFG = api.CFG
 TICKERS = CFG["data"]["tickers"]
 COLS = CFG["data"]["columns"]
@@ -462,3 +465,39 @@ def test_integration_calculated_target_keeps_rule_reason_and_fixed_training_risk
             assert "No trade:" in answer["reason"] or "Rebalance" in answer["reason"]
             reasons.append(answer["reason"].split("a year.")[0])
     assert reasons[0] == reasons[1]
+
+
+# ---------- /predict: the contract (extra fields forbidden) ----------
+
+def _wrong_bodies() -> dict:
+    """Four invalid bodies, one per kind of breach: an extra field, a missing field, a wrong type, a bad range."""
+    extra = request_body()
+    extra["surprise"] = 1
+    missing = request_body()
+    del missing["as_of"]
+    wrong_type = request_body(weeks_since_rebalance="soon")
+    out_of_range = request_body(drawdown=0.5)
+    return {"extra field": extra, "missing field": missing, "wrong type": wrong_type, "out of range": out_of_range}
+
+
+@pytest.mark.parametrize("kind", ["extra field", "missing field", "wrong type", "out of range"])
+def test_integration_each_kind_of_invalid_body_is_422(start_app, kind):
+    with start_app(None) as client:
+        response = client.post("/predict", json=_wrong_bodies()[kind])
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("where", ["position", "price"])
+def test_integration_extra_field_inside_a_nested_record_is_422(start_app, where):
+    body = request_body()
+    (body["positions"] if where == "position" else body["prices"])[0]["surprise"] = 1
+    with start_app(None) as client:
+        response = client.post("/predict", json=body)
+    assert response.status_code == 422
+
+
+def test_integration_the_sample_request_file_gets_200(start_app):
+    sample = json.loads((ROOT / "scripts" / "sample_request.json").read_text(encoding="utf-8"))
+    with start_app(None) as client:
+        response = client.post("/predict", json=sample)
+    assert response.status_code == 200, response.text
